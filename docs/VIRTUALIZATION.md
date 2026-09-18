@@ -47,6 +47,10 @@ The intended replacement is a persistent ARM64 Arch guest with two launch modes:
 2. `æ command args...`: reuse the running guest and execute an argument vector,
    preserving stdout/stderr, exit status, signals, and working-directory mapping.
 
+The user selected a **fresh Arch guest first**, with selected files/configuration
+migrated afterward. Do not convert or replace the current PRoot installation as
+part of the initial boot experiment.
+
 The guest needs its own compatible kernel/initramfs, bootable filesystem, guest
 user/ownership setup, and an authenticated host-to-guest transport. An existing
 PRoot directory is not a bootable VM image. PRoot hard-link emulation and its
@@ -81,3 +85,25 @@ identity. A successful capability query is not a boot or performance result.
 
 References: [AOSP AVF overview](https://source.android.com/docs/core/virtualization),
 [Podroid AVF setup and implementation](https://extv.github.io/Podroid/guide/backends.html).
+
+## Pixel preflight result - 2026-09-18
+
+API build `cbdff84` passed 17 Java tests; CLI build `aef67db` passed 13 tests.
+The installed command completed through the real Termux session (API UID 10445)
+and returned `denied`, with manager capability bits **3**: both protected and
+non-protected VMs are available. The manager query itself succeeded.
+
+Both app VM permissions are ungranted. The custom-image probe returned
+`NoSuchMethodException`; targeted app logcat identified Android's hidden-API
+policy denying reflection of `VirtualMachineCustomImageConfig.Builder.setKernelPath`
+for target SDK 37. This is a framework access restriction, not evidence that the
+Pixel lacks custom-VM hardware support. Permission grants alone do not establish
+that this blocked method becomes usable.
+
+ADB's platform `vm info` confirms both VM types and `kvm.arm-protected`.
+`/apex/com.android.virt/bin/vm run --help` exposes a custom JSON-config launcher,
+CPU topology, memory, console and network options. A bounded Shizuku-backed
+launcher around that platform tool is the next candidate to validate, keeping
+image/config paths under app control and exposing no arbitrary shell command.
+Help output is not proof that an Arch guest boots. No VM was created or changed
+during this probe, and neither VM permission was granted.
