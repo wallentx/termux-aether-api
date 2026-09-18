@@ -163,3 +163,23 @@ transport, project sharing, `Æ`/`æ` wiring and PRoot comparison remain follow-
 Implementation references: [AOSP JSON config schema](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/libs/vmconfig/src/lib.rs),
 [AOSP platform VM runner](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/android/vm/src/run.rs),
 [Arch Linux ARM generic image](https://archlinuxarm.org/platforms/armv8/generic).
+
+
+After replacing the APK while Termux stays alive, Shizuku may report
+`binder_not_connected` despite a running server. On this Pixel, opening the
+Termux:API main activity once delivered the binder without restarting Shizuku or
+changing permissions. The shared UID can remain active across the API process
+replacement, so waiting alone does not always trigger delivery. Return to Termux
+and repeat the status command; do not interpret this transport state as lack of
+AVF hardware support.
+
+`guest/arch/device_test.py REPORT_DIRECTORY` is an ADB-coordinated integration
+harness to launch from a real Termux session after installing the APK and CLI.
+It records the UID/SELinux domain and waits up to 40 minutes for `image-ready`
+in that directory. Create that marker only after verified image staging. It
+checks guest readiness, repeated-start reuse, graceful stop and restart, then
+waits up to 3 minutes for `owner-killed` after the test operator kills only the
+owned Shizuku VM service. It finally verifies the replacement service reports
+stopped. The operator must also confirm the owned VM disappeared from Android's
+VM list; restarting a service alone does not prove guest cleanup. Results and
+console output are retained in `report.json`.
