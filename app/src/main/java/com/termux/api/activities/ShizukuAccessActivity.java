@@ -6,7 +6,13 @@ import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
+
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.termux.api.R;
 
@@ -27,11 +33,29 @@ public final class ShizukuAccessActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         setTitle(R.string.shizuku_access);
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+            .setAppearanceLightStatusBars(true);
+        WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
+            .setAppearanceLightNavigationBars(true);
         automaticRequestUsed = state != null && state.getBoolean("automatic_request_used");
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, insets) -> {
+            Insets safe = insets.getInsets(WindowInsetsCompat.Type.systemBars()
+                | WindowInsetsCompat.Type.displayCutout());
+            view.setPadding(safe.left, safe.top, safe.right, safe.bottom);
+            return insets;
+        });
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         int padding = (int) (24 * getResources().getDisplayMetrics().density);
         layout.setPadding(padding, padding, padding, padding);
+        TextView title = new TextView(this);
+        title.setText(R.string.shizuku_access);
+        title.setTextAppearance(android.R.style.TextAppearance_Material_Headline);
+        title.setPadding(0, 0, 0, padding);
+        layout.addView(title);
         TextView explanation = new TextView(this);
         explanation.setText(R.string.shizuku_explanation);
         layout.addView(explanation);
@@ -50,7 +74,9 @@ public final class ShizukuAccessActivity extends Activity {
             else status.setText(R.string.shizuku_install_manager);
         });
         layout.addView(manager);
-        setContentView(layout);
+        scroll.addView(layout);
+        setContentView(scroll);
+        ViewCompat.requestApplyInsets(scroll);
         Shizuku.addBinderReceivedListenerSticky(received);
         Shizuku.addBinderDeadListener(died);
         Shizuku.addRequestPermissionResultListener(permission);
