@@ -41,6 +41,7 @@ public final class CapabilitiesAPI {
         report.put("battery", probe(() -> battery(context)));
         report.put("thermal", probe(() -> thermal(context)));
         report.put("shizuku", probe(() -> ShizukuAPI.status(context)));
+        report.put("virtualization", probe(() -> VirtualizationAPI.collect(context)));
         report.put("storage", probe(() -> new JSONObject().put("status", "ok")
                 .put("all_files_access", Build.VERSION.SDK_INT >= 30 ? Environment.isExternalStorageManager() : JSONObject.NULL)
                 .put("scope", "Termux:API process; content URI grants are not enumerated")));
