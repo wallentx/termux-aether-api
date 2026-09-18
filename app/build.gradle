@@ -2,7 +2,10 @@ apply plugin: 'com.android.application'
 
 android {
     namespace "com.termux.api"
-    buildFeatures { buildConfig true }
+    buildFeatures {
+        buildConfig true
+        aidl true
+    }
 
     compileSdk project.properties.compileSdkVersion.toInteger()
     compileSdkMinor project.properties.compileSdkMinorVersion.toInteger()
