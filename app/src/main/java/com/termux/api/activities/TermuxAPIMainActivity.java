@@ -87,6 +87,11 @@ public class TermuxAPIMainActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(MenuItem item) {
         int id = item.getItemId();
 
+        if (id == R.id.menu_shizuku) {
+            startActivity(new Intent(this, ShizukuAccessActivity.class));
+            return true;
+        }
+
         if (id == R.id.menu_settings) {
             openSettings();
             return true;

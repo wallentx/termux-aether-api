@@ -29,7 +29,8 @@ The snapshot is read-only and does not prompt for permissions, start a VM, chang
 settings, call privileged Shizuku operations, or contact remote hosts. It excludes
 serial numbers, IMEI, accounts and credentials. Shizuku's provider acquires its
 Binder normally; this command only inspects connection/permission state. There is
-no authorization UI or privileged adapter in this slice.
+no authorization UI in this command. The separate [Shizuku integration](SHIZUKU.md)
+adds explicit permission requests and bounded thermal diagnostics.
 
 Avoid rapid polling. Android may return NaN for thermal headroom when unsupported
 or sampled too frequently; JSON reports `unavailable` and null in that case.

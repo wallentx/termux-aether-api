@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shizuku_access">Shizuku access</string>
+    <string name="shizuku_explanation">Shizuku gives this app ADB-level access. This build uses it only to read detailed thermal diagnostics. You can revoke access in Shizuku at any time.</string>
+    <string name="shizuku_request_access">Request access</string>
+    <string name="shizuku_open_manager">Open Shizuku</string>
+    <string name="shizuku_install_manager">Install Shizuku, start its service, then return here.</string>
+    <string name="shizuku_not_running">Shizuku is not connected. Start it in the Shizuku app, then return here.</string>
+    <string name="shizuku_too_old">Update Shizuku to use this integration.</string>
+    <string name="shizuku_access_needed">Shizuku is running. Permission is required for thermal diagnostics.</string>
+    <string name="shizuku_access_granted">Access granted. Run termux-shizuku --thermal in Termux.</string>
+    <string name="shizuku_denied_permanently">Access was denied. Enable Termux:API in Shizuku’s authorized applications.</string>
+</resources>

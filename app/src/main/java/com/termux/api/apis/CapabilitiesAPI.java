@@ -23,7 +23,6 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-import rikka.shizuku.Shizuku;
 
 /** Read-only snapshot. No permission prompts, privileged operations, or network requests. */
 public final class CapabilitiesAPI {
@@ -41,7 +40,7 @@ public final class CapabilitiesAPI {
         report.put("permissions", probe(() -> permissions(context)));
         report.put("battery", probe(() -> battery(context)));
         report.put("thermal", probe(() -> thermal(context)));
-        report.put("shizuku", probe(() -> shizuku(context)));
+        report.put("shizuku", probe(() -> ShizukuAPI.status(context)));
         report.put("storage", probe(() -> new JSONObject().put("status", "ok")
                 .put("all_files_access", Build.VERSION.SDK_INT >= 30 ? Environment.isExternalStorageManager() : JSONObject.NULL)
                 .put("scope", "Termux:API process; content URI grants are not enumerated")));
@@ -157,23 +156,4 @@ public final class CapabilitiesAPI {
         return value >= 0 && value < labels.length ? labels[value] : "unknown";
     }
 
-    private static JSONObject shizuku(Context context) throws JSONException {
-        boolean installed;
-        try {
-            context.getPackageManager().getPackageInfo("moe.shizuku.privileged.api", 0);
-            installed = true;
-        } catch (PackageManager.NameNotFoundException error) {
-            installed = false;
-        }
-        JSONObject result = new JSONObject().put("manager_installed", installed);
-        if (!Shizuku.pingBinder()) {
-            return result.put("status", "unavailable").put("reason", "binder_not_connected")
-                    .put("authorized", JSONObject.NULL);
-        }
-        if (Shizuku.isPreV11()) return result.put("status", "unsupported").put("reason", "requires_shizuku_v11");
-        boolean granted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
-        result.put("status", granted ? "ok" : "denied").put("authorized", granted);
-        if (granted) result.put("service_uid", Shizuku.getUid());
-        return result;
-    }
 }

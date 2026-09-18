@@ -87,6 +87,11 @@
             android:theme="@style/Theme.BaseActivity.DayNight.NoActionBar">
         </activity>
 
+        <activity
+            android:name=".activities.ShizukuAccessActivity"
+            android:exported="false"
+            android:label="@string/shizuku_access" />
+
         <activity-alias
             android:name=".activities.TermuxAPILauncherActivity"
             android:exported="true"
