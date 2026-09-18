@@ -5,6 +5,10 @@ on:
     branches:
       - master
       - 'wallentx/**'
+    paths-ignore:
+      - 'guest/**'
+      - 'docs/**'
+      - '.github/workflows/arch-guest.yml'
   pull_request:
     branches:
       - master

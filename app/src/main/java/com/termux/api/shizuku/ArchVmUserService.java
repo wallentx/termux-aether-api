@@ -29,6 +29,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private java.lang.Process child;
     private boolean starting;
     private boolean ownerActive;
+    private CountDownLatch ownerFinished = new CountDownLatch(0);
     private boolean ready;
     private Integer exitCode;
     private String failure;
@@ -55,6 +56,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Override public String start() {
         authorize();
         CountDownLatch spawned = new CountDownLatch(1);
+        final CountDownLatch finished = new CountDownLatch(1);
         synchronized (guard) {
             if (ownerActive) return report();
             try {
@@ -76,6 +78,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 Os.chmod(config.getPath(), 0600);
                 starting = true;
                 ownerActive = true;
+                ownerFinished = finished;
                 ready = false;
                 exitCode = null;
                 failure = null;
@@ -108,6 +111,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             } finally {
                 if (running != null && running.isAlive()) running.destroyForcibly();
                 synchronized (guard) { starting = false; ownerActive = false; }
+                finished.countDown();
                 spawned.countDown();
             }
         }, "arch-vm-owner");
@@ -145,9 +149,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Override public String stop() {
         authorize();
         java.lang.Process running;
+        CountDownLatch finished;
         synchronized (guard) {
             if (starting) return "{\"status\":\"busy\",\"reason\":\"start_in_progress\"}";
             running = child;
+            finished = ownerFinished;
         }
         if (running != null && running.isAlive()) {
             try {
@@ -162,6 +168,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 running.destroyForcibly();
             }
         }
+        // The owner also drains the final console bytes before publishing exitCode.
+        try { finished.await(2, TimeUnit.SECONDS); }
+        catch (InterruptedException error) { Thread.currentThread().interrupt(); }
         synchronized (guard) { return report(); }
     }
 
