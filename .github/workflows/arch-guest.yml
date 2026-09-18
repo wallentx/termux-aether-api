@@ -2,7 +2,7 @@ name: Arch AVF guest
 on:
   push:
     branches: ['wallentx/**']
-    paths: ['guest/arch/**', '.github/workflows/arch-guest.yml']
+    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', '.github/workflows/arch-guest.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -19,8 +19,27 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev libarchive-tools e2fsprogs zstd qemu-system-arm
+      - name: Restore guest kernel
+        id: kernel
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            guest-out/Image
+            guest-out/kernel.config
+          key: arch-kernel-v1-6.18.52-${{ hashFiles('guest/arch/kernel.config') }}
+      - name: Build guest kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        run: bash guest/arch/build.sh kernel
+      - name: Save guest kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            guest-out/Image
+            guest-out/kernel.config
+          key: ${{ steps.kernel.outputs.cache-primary-key }}
       - name: Build and boot fresh Arch guest
-        run: bash guest/arch/build.sh
+        run: bash guest/arch/build.sh rootfs
       - uses: actions/upload-artifact@v4
         with:
           name: arch-avf-${{ github.sha }}

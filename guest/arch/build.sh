@@ -10,6 +10,9 @@ out="$GITHUB_WORKSPACE/guest-out"
 mkdir -p "$out" "$work/root"
 cd "$work"
 kernel_version=6.18.52
+mode=${1:-all}
+[[ $mode == all || $mode == kernel || $mode == rootfs ]] || exit 2
+if [[ $mode != rootfs ]]; then
 curl --fail --location --proto '=https' --retry 3 \
     "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-$kernel_version.tar.xz" -o kernel.tar.xz
 printf '%s  kernel.tar.xz\n' 2b69564f7d4fea0c859b1959ba33709ee6e9139bd100e30a853b57159a8221b8 | sha256sum -c -
@@ -24,12 +27,14 @@ done
 make -j"$(nproc)" ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- Image
 cp arch/arm64/boot/Image "$out/Image"
 cp .config "$out/kernel.config"
+fi
+[[ $mode != kernel ]] || exit 0
 cd "$work"
 arch_url=https://ca.us.mirror.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
 curl --fail --location --proto '=https' --retry 3 "$arch_url" -o arch.tar.gz
 # Upstream publishes MD5. HTTPS authenticates transport; record SHA256 provenance too.
 # Pin this snapshot so a later rolling tarball change fails instead of silently changing the guest.
-printf '%s  arch.tar.gz\n' 023eec86365b24f7913c403e8f4e8719b | md5sum -c -
+printf '%s  arch.tar.gz\n' 23eec86365b24f7913c403e8f4e8719b | md5sum -c -
 sha256sum arch.tar.gz > "$out/rootfs-source.sha256"
 printf 'source=%s\nkernel=%s\ncommit=%s\n' "$arch_url" "$kernel_version" "$GITHUB_SHA" > "$out/provenance.txt"
 sudo bsdtar -xpf arch.tar.gz -C root
