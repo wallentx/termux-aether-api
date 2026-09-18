@@ -2,8 +2,15 @@ apply plugin: 'com.android.application'
 
 android {
     namespace "com.termux.api"
+    buildFeatures { buildConfig true }
 
     compileSdk project.properties.compileSdkVersion.toInteger()
+    compileSdkMinor project.properties.compileSdkMinorVersion.toInteger()
+    ndkVersion project.properties.ndkVersion
+    def buildProfile = providers.gradleProperty('termuxBuildProfile').getOrElse('pixel11')
+    if (!(buildProfile in ['pixel11', 'all'])) {
+        throw new GradleException("termuxBuildProfile must be pixel11 or all")
+    }
     def appVersionName = System.getenv("TERMUX_API_APP__BUILD__APP_VERSION_NAME") ?: ""
     def apkVersionTag = System.getenv("TERMUX_API_APP__BUILD__APK_VERSION_TAG") ?: ""
 
@@ -20,6 +27,17 @@ android {
         manifestPlaceholders.TERMUX_PACKAGE_NAME = "com.termux"
         manifestPlaceholders.TERMUX_APP_NAME = "Termux"
         manifestPlaceholders.TERMUX_API_APP_NAME = "Termux:API"
+        ndk {
+            abiFilters.addAll(buildProfile == 'pixel11' ? ['arm64-v8a'] :
+                    ['arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64'])
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
     }
 
     signingConfigs {
@@ -80,6 +98,12 @@ dependencies {
     //implementation "com.termux:termux-shared:0.118.0"
 
     implementation "com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava"
+    implementation "dev.rikka.shizuku:api:13.1.5"
+    implementation "dev.rikka.shizuku:provider:13.1.5"
+
+    testImplementation 'junit:junit:4.13.2'
+    // Pure JSON/model tests; device/framework calls are validated on the Pixel.
+    testImplementation 'org.json:json:20240303'
 }
 
 task versionName {

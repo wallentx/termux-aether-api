@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:sharedUserId="${TERMUX_PACKAGE_NAME}">
 
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
 
 
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -68,6 +72,14 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light"
         tools:ignore="GoogleAppIndexingWarning">
+
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <activity
             android:name=".activities.TermuxAPIMainActivity"
