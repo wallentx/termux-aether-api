@@ -24,7 +24,7 @@ int main(int argc, char **argv) {
         return 5;
     }
     // Keep the lock open through exec. Never accept user paths, flags, or shell text.
-    execl("/apex/com.android.virt/bin/vm", "vm", "run",
+    execl("/apex/com.android.virt/bin/vm", "vm", "run", "--name", "termux-arch-v1",
           "/data/local/tmp/termux-arch-v1/config.json", (char *)NULL);
     perror("exec AVF vm");
     return 6;

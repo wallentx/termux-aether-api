@@ -130,6 +130,8 @@ def vmLauncherOutput = layout.buildDirectory.dir("generated/vmLauncher/jniLibs")
 android.sourceSets.main.jniLibs.srcDir(vmLauncherOutput)
 tasks.register("buildVmLauncher") {
     inputs.file("src/main/cpp/vm-launcher.c")
+    inputs.property("abis", android.defaultConfig.ndk.abiFilters.sort().join(","))
+    inputs.property("ndkVersion", android.ndkVersion)
     outputs.dir(vmLauncherOutput)
     doLast {
         def host = org.gradle.internal.os.OperatingSystem.current()
