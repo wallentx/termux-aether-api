@@ -1,0 +1,37 @@
+name: Arch AVF guest
+on:
+  push:
+    branches: ['wallentx/**']
+    paths: ['guest/arch/**', '.github/workflows/arch-guest.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: arch-guest-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install guest build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev libarchive-tools e2fsprogs zstd qemu-system-arm
+      - name: Build and boot fresh Arch guest
+        run: bash guest/arch/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-avf-${{ github.sha }}
+          path: guest-out/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload failed boot log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-avf-failure
+          path: guest-out/ci-console.txt
+          if-no-files-found: ignore

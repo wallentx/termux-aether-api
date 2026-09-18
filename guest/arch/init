@@ -1,0 +1,27 @@
+#!/usr/bin/bash
+# Initial boot proof: read-only Arch root, no network or login services.
+set -eu
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+exec </dev/hvc0 >/dev/hvc0 2>&1
+stty -echo
+printf '\nTERMUX_ARCH_BOOT_V1\n'
+cat /etc/os-release
+uname -a
+pacman --version
+printf 'root_mount: '
+findmnt -n -o SOURCE,FSTYPE,OPTIONS /
+printf 'TERMUX_ARCH_READY_V1\n'
+# Never execute guest input as a command. Only the fixed shutdown token is accepted.
+while true; do
+    if IFS= read -r command; then
+        case "$command" in
+            poweroff) sync; printf 'TERMUX_ARCH_STOPPING_V1\n'; echo o > /proc/sysrq-trigger ;;
+        esac
+    else
+        sleep 1
+    fi
+done
