@@ -107,3 +107,59 @@ launcher around that platform tool is the next candidate to validate, keeping
 image/config paths under app control and exposing no arbitrary shell command.
 Help output is not proof that an Arch guest boots. No VM was created or changed
 during this probe, and neither VM permission was granted.
+
+## Experimental Shizuku Arch boot
+
+`termux-arch-vm --start`, `--status` (default), and `--stop` operate only the fixed
+`termux-arch-v1` guest. `termux-virtualization --status` remains the app-UID preflight.
+The first milestone boots a fresh Arch Linux ARM root filesystem with a separately
+built Linux 6.18.52 kernel. It intentionally uses a **read-only disk, one vCPU,
+1 GiB RAM, no networking and no guest login/command execution**. Arch's `pacman
+--version`, kernel identity and root mount appear in `console_tail`; only the
+guest's readiness marker changes `guest_boot` to `verified`. `backend` names the
+selected launcher even before boot; it is not alone proof of successful AVF.
+
+The long-lived Shizuku user service runs as shell UID 2000 and checks the caller
+UID on every method. It accepts no caller-supplied paths, configuration, shell
+commands or VM IDs. A fixed native helper holds an exclusive file lock, sets
+`PR_SET_PDEATHSIG`, and execs Android's platform `vm run` with a generated config.
+The thread that creates this child remains alive for its lifetime. Repeated start
+requests reuse the same VM; app command completion detaches without stopping it.
+Explicit stop first sends a fixed shutdown token, then may kill only that owned
+process after a deadline. Forced shutdown is safe for this **read-only** milestone;
+that policy must change before enabling a writable guest. Service death/update
+stops its VM. No automatic restart is performed, and other Android VMs are never
+stopped or modified. The shell staging area is accessible to other shell/root
+clients; it is not protection against a compromised Shizuku/ADB session.
+
+Build `Arch AVF guest` in CI. It fetches Arch's official HTTPS mirror, checks the
+pinned upstream MD5 snapshot and records SHA256 provenance; kernel source is
+SHA256-pinned. It boots the image under QEMU in CI solely as a compatibility test.
+Pixel execution exclusively uses AVF. CI publishes `Image`, compressed ext4 disk,
+source metadata, kernel config, console evidence and SHA256 checksums. No native
+build or image construction runs on either phone.
+
+Download a successful artifact from the trusted fork's CI, then stage once:
+
+```sh
+python guest/arch/stage.py --serial IP:PORT /path/to/artifact
+# Inside the actual Pixel Termux session:
+termux-arch-vm --start
+termux-arch-vm --status
+termux-arch-vm --stop
+```
+
+Staging verifies checksums before transfer, uses a new private shell-owned
+directory, and refuses to replace an existing guest. It needs about 6 GiB of Pixel
+storage plus the downloaded compressed artifact on the host. Installation and
+checksums are separate from ongoing VM lifecycle operations. A rolling upstream
+tarball change intentionally fails the pinned snapshot check until reviewed.
+
+Device acceptance: verify actual Arch readiness, repeated-start reuse, clean
+stop, restart, and cleanup after killing the owned service. Until these pass,
+boot support remains experimental. Writable storage, authenticated guest command
+transport, project sharing, `Æ`/`æ` wiring and PRoot comparison remain follow-ups.
+
+Implementation references: [AOSP JSON config schema](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/libs/vmconfig/src/lib.rs),
+[AOSP platform VM runner](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/android/vm/src/run.rs),
+[Arch Linux ARM generic image](https://archlinuxarm.org/platforms/armv8/generic).

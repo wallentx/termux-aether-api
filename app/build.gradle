@@ -80,6 +80,7 @@ android {
     }
 
     packagingOptions {
+        jniLibs { useLegacyPackaging = true }
         // Remove terminal-emulator and termux-shared JNI libs added via termux-shared dependency
         exclude "lib/*/libtermux.so"
         exclude "lib/*/liblocal-socket.so"
@@ -122,3 +123,30 @@ static def validateVersionName(String versionName) {
     if (!java.util.regex.Pattern.matches("^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?\$", versionName))
         throw new GradleException("The versionName '" + versionName + "' is not a valid version as per semantic version '2.0.0' spec in the format 'major.minor.patch(-prerelease)(+buildmetadata)'. https://semver.org/spec/v2.0.0.html.")
 }
+
+// Package a PIE executable as a native library so Android installs it on executable
+// storage. This is a separate helper, not a library loaded into the app process.
+def vmLauncherOutput = layout.buildDirectory.dir("generated/vmLauncher/jniLibs")
+android.sourceSets.main.jniLibs.srcDir(vmLauncherOutput)
+tasks.register("buildVmLauncher") {
+    inputs.file("src/main/cpp/vm-launcher.c")
+    outputs.dir(vmLauncherOutput)
+    doLast {
+        def host = org.gradle.internal.os.OperatingSystem.current()
+        def hostTag = host.isMacOsX() ? "darwin-x86_64" : host.isWindows() ? "windows-x86_64" : "linux-x86_64"
+        def triples = ["arm64-v8a": "aarch64-linux-android", "armeabi-v7a": "armv7a-linux-androideabi",
+                       "x86": "i686-linux-android", "x86_64": "x86_64-linux-android"]
+        android.defaultConfig.ndk.abiFilters.each { abi ->
+            def destination = new File(vmLauncherOutput.get().asFile, abi)
+            destination.mkdirs()
+            def compiler = new File(android.sdkDirectory,
+                    "ndk/${android.ndkVersion}/toolchains/llvm/prebuilt/${hostTag}/bin/${triples[abi]}26-clang" + (host.isWindows() ? ".cmd" : ""))
+            providers.exec {
+                commandLine compiler, "-Wall", "-Wextra", "-Werror", "-O2", "-fPIE", "-pie",
+                        "-Wl,-z,max-page-size=16384", file("src/main/cpp/vm-launcher.c"),
+                        "-o", new File(destination, "libtermux-vm-launcher.so")
+            }.result.get().assertNormalExitValue()
+        }
+    }
+}
+tasks.named("preBuild").configure { dependsOn("buildVmLauncher") }

@@ -14,7 +14,7 @@ import org.json.JSONObject;
 import java.io.File;
 import java.lang.reflect.InvocationTargetException;
 
-/** Read-only AVF preflight in the app UID. No hidden-API bypass, grants, or VM creation. */
+/** App-UID preflight plus explicitly selected, bounded Shizuku Arch operations. */
 public final class VirtualizationAPI {
     private static final String PREFIX = "android.system.virtualmachine.";
     private static final String MANAGE = "android.permission.MANAGE_VIRTUAL_MACHINE";
@@ -23,12 +23,13 @@ public final class VirtualizationAPI {
     private VirtualizationAPI() {}
 
     public static void onReceive(TermuxApiReceiver receiver, Context context, Intent intent) {
-        String operation = intent.getStringExtra("operation");
+        String argument = intent.getStringExtra("operation");
+        final String operation = argument == null ? "status" : argument;
         ResultReturner.returnData(receiver, intent, out -> {
-            JSONObject report = operation == null || "status".equals(operation)
+            JSONObject report = "status".equals(operation)
                     ? CapabilitiesAPI.probe(() -> collect(context))
-                    : new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
-            report.put("schema_version", 1).put("operation", "status");
+                    : CapabilitiesAPI.probe(() -> ArchVmAPI.call(context, operation));
+            report.put("schema_version", 1).put("operation", operation);
             out.println(report.toString(2));
         });
     }
