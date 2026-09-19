@@ -139,8 +139,13 @@ still does not bypass its restrictions. The service holds an exclusive disk-owne
 lock before writing configuration or attaching storage. It binds a random Android loopback port and relays
 at most eight sessions to the fixed port of its owned guest. Other Android apps
 can reach that loopback listener but cannot authenticate without the private key.
-Password login and SSH forwarding are disabled. A virtual Ethernet adapter uses
-AVF's Android tethering service; guest `dhcpcd` acquires IPv4, routes and DNS.
+Password login and SSH forwarding are disabled. Guest `avf0` is a TAP interface
+carried over owned AVF vsock port 2223 to a userspace IPv4 backend. The Android
+17 preview advertises native networking, but its bundled crosvm rejects AVF's
+`--net` argument before boot. Native networking therefore remains disabled.
+The fallback uses `gvisor-tap-vsock` v0.8.9, cross-built for Android arm64 in CI;
+the artifact includes dependency license notices. Guest `dhcpcd` acquires
+192.168.127.2/24, gateway 192.168.127.1 and DNS from this private backend.
 The DHCP hook writes a readable runtime resolver file without requiring systemd.
 DHCP retries asynchronously, so an offline phone can still open local SSH.
 On first boot, `pacman-key --init` and `--populate archlinuxarm` initialize package
@@ -149,8 +154,17 @@ The host supplies its current Unix time as a numeric boot parameter, which init
 applies before key generation and HTTPS. The original AVF guest had no working
 wall clock and created files dated 1970. This is boot-time synchronization, not
 a continuous time service across long host suspend periods.
-`network_enabled` reports adapter configuration, not internet reachability;
-`network_connectivity` remains `not_probed` until independently tested. The
+The backend supports outbound IPv4 TCP and UDP, including LAN destinations.
+It uses Android sockets with Shizuku's shell identity. It opens no Android
+listening port and installs no host port forwards. Guest packets addressed to
+loopback, unspecified or link-local IPv4 are rejected. IPv6, raw ICMP and
+multicast discovery are not supplied. This is a userspace packet bridge, not
+direct Wi-Fi access or a claim of native-NIC performance.
+
+`network_enabled` reports configuration; `network_bridge_state=connected`
+reports transport setup, not internet reachability. `network_connectivity`
+remains `not_probed` until independently tested. A missing helper or failed
+network connection leaves local SSH available and reports `network_error`. The
 initial shell is guest root; it does not grant Android root or expose host paths.
 The bridge uses the standard SSH protocol for PTY resize, interrupts, binary I/O,
 separate stdout/stderr and exit codes. No guest command is executed by Android's
@@ -165,13 +179,14 @@ fails before command execution. `Æ` opens a login shell in guest home. Exiting 
 shell keeps the VM alive; `termux-arch-vm --stop` shuts it down. Failed commands are
 never automatically retried, since they may have changed files already.
 
-CI validates the root image under QEMU with a virtual NIC, checks SSH,
+CI validates the root image under QEMU with a management NIC, checks SSH,
 PTY allocation, binary stdin, separate output/exit code and persistence across
 a clean reboot. It also exercises Landlock enforcement and a sandboxed Pacman
-download against a local test repository. Only the CI flag exposes SSH on
-Ethernet (port 2222); production SSH remains loopback-only. Actual vsock access,
-Android tethering and internet reachability require Pixel testing. No PRoot
-speedup is claimed.
+download against a local test repository. A separate TAP-to-backend path tests
+the production packet protocol, DHCP, DNS, TCP and UDP; SSH replaces vsock only
+as its CI transport. Only the CI flag exposes SSH on Ethernet (port 2222);
+production SSH remains loopback-only. Actual AVF vsock access, Android socket
+policy and internet reachability require Pixel testing. No PRoot speedup is claimed.
 
 ### Guest defaults and their costs
 
@@ -179,7 +194,7 @@ speedup is claimed.
 | --- | --- |
 | 1 vCPU, 1 GiB RAM, 6 GiB disk | Conservative resource allocation; tune from real workloads. More CPUs do not accelerate serial work, and memory competes with Android. |
 | Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
-| IPv4 DHCP via AVF tethering | No direct Wi-Fi hardware access required. IPv6 integration is not configured. A lease does not establish internet reachability. |
+| Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
 | No Android directory sharing | Requires an explicit host/guest sharing mechanism and selected paths. VIRTIO_FS is not enabled in the current kernel. |
 | DRM, audio, WLAN, Bluetooth, modules disabled | Smaller fixed kernel; enabling guest drivers alone cannot provide host virtual devices or passthrough. Modules need matching installed files on each kernel upgrade. |
 | Minimal Bash PID 1 | Fast shell workspace; normal systemd service management is unavailable. |
@@ -192,7 +207,8 @@ does not prove acceleration. There is no automatic VM start or restart.
 
 ### Updating an existing guest without replacing its disk
 
-The CI artifact includes `guest-update.tar` alongside `Image` and SHA256SUMS.
+The CI artifact includes `guest-update.tar`, `arch-network-host` and dependency
+license notices alongside `Image` and SHA256SUMS.
 Verify checksums first. Keep a backup and save work before stopping the VM.
 
 1. Extract the update payload into a temporary guest directory over authenticated
@@ -201,7 +217,7 @@ Verify checksums first. Keep a backup and save work before stopping the VM.
    Do not merely copy it and overwrite/unlink the original: Bash PID 1 retains
    the old inode, and an open unlinked inode can prevent ext4 remount-read-only.
    Retain that backup until after a successful shutdown.
-2. Install `termux-vm-network` and `termux-vm-shutdown` under `/usr/local/sbin`,
+2. Install `termux-vm-network`, `termux-vm-shutdown` and `termux-vsock-net` under `/usr/local/sbin`,
    `termux-landlock-check` under `/usr/local/bin`, and `termux-dhcp-hook` under
    `/usr/local/libexec`, all mode 0755. For the original image's dangling
    `/etc/resolv.conf -> /run/systemd/resolve/resolv.conf` link, preserve a backup
@@ -209,8 +225,10 @@ Verify checksums first. Keep a backup and save work before stopping the VM.
    configuration instead of overwriting it blindly.
 3. Run `termux-arch-vm --stop` and verify `running=false` and
    `clean_shutdown=true`. Only then replace the host-side kernel with the
-   verified `Image`, retaining the old kernel. Install any API APK update while
-   stopped. Never replace `arch-rootfs.img` or reset SSH keys.
+   verified `Image`, retaining the old kernel. Stage `arch-network-host` at
+   `/data/local/tmp/termux-arch-v2/arch-network-host`, owned by shell UID 2000,
+   mode 0700. Install any API APK update while stopped. Never replace
+   `arch-rootfs.img` or reset SSH keys.
 4. Start the VM and run `guest/arch/network_test.py` from native Termux. It checks
    real Landlock enforcement, address/DNS, HTTPS, sandboxed repository download
    and SSH binding. Its temporary Pacman DB does not update installed packages
