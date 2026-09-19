@@ -475,3 +475,19 @@ requests fail explicitly if this host disables balloon control. Reclamation is
 asynchronous and not proof of exact resident memory. This is manual live sizing;
 automatic pressure-based resizing is not enabled. Avoid shrinking below the active
 workload's needs. Suspend/shutdown still follow the session policy.
+
+### Pixel resource validation (2026-09-19)
+
+API `60018b9` and CLI `3a95078` passed on the Pixel:
+
+- The running 8 GiB guest reclaimed exactly 2 GiB through the balloon, then
+  restored it to zero ballooned bytes without changing VM identity.
+- A stopped 6 GiB image was backed up with matching SHA-256 before growth.
+  `--grow-disk 16G` expanded the block image and ext4; a persistent guest file
+  and SSH host key survived. The sparse image occupied about 6 GiB afterward.
+- A subsequent 6 GiB shrink request was rejected. Default session exit left the
+  guest stopped with `clean_shutdown: true`.
+
+This verifies manual resource controls, not automatic memory-pressure tuning.
+The backup remains at
+`/data/local/tmp/termux-arch-v2/arch-rootfs.before-resize-20260919.img`.
