@@ -27,6 +27,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private final Context context;
     private final Object guard = new Object();
     private final StringBuilder output = new StringBuilder();
+    private final ArchVmSessions sessions = new ArchVmSessions();
+    private boolean suspended;
+    private String idleFailure;
     private ArchVmInstance child;
     private ArchVmBridge bridge;
     private ArchVmNetwork network;
@@ -75,6 +78,20 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     return memoryError("memory_change_requires_stop");
                 if (publicKey != null && !publicKey.equals(authorizedKey))
                     return "{\"status\":\"error\",\"reason\":\"key_change_requires_stop\"}";
+                if (stopping) return report();
+                if (suspended) {
+                    try {
+                        resumeOwned(child);
+                        guard.notifyAll();
+                        idleFailure = null;
+                    } catch (Exception error) {
+                        idleFailure = "resume_failed: " + error.getClass().getSimpleName();
+                        return memoryError(idleFailure);
+                    }
+                }
+                // Explicit --start without a session is a manual lifecycle request.
+                sessions.expire(SystemClock.elapsedRealtime());
+                if (sessions.count() == 0) sessions.clear();
                 return report();
             }
             try {
@@ -111,7 +128,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 try (FileOutputStream stream = new FileOutputStream(seed)) { stream.write(bytes); }
                 Os.chmod(seed.getPath(), 0600);
                 starting = ownerActive = true;
-                stopping = ready = cleanShutdown = false;
+                stopping = ready = cleanShutdown = suspended = false;
+                idleFailure = null;
                 cid = 0;
                 hostKey = failure = null;
                 readyAfterMs = null;
@@ -138,23 +156,30 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 running.start();
                 synchronized (guard) { cid = running.cid(); starting = false; }
                 spawned.countDown();
-                while (running.isAlive()) Thread.sleep(200);
+                while (running.isAlive()) {
+                    idleIfUnused(running);
+                    synchronized (guard) { guard.wait(suspended ? 15000 : 250); }
+                }
                 drain.join(1000);
                 synchronized (guard) {
-                    if (!cleanShutdown && failure == null)
+                    if (ownerFinished == finished && !cleanShutdown && failure == null)
                         failure = ready ? "vm_exited_without_clean_shutdown" : "vm_exited_before_readiness";
                 }
             } catch (Exception | LinkageError error) {
                 android.util.Log.w("termux-arch-vm", "AVF owner failed", error);
-                synchronized (guard) { failure = "avf_failed: " + error.getClass().getSimpleName(); }
+                synchronized (guard) {
+                    if (ownerFinished == finished) failure = "avf_failed: " + error.getClass().getSimpleName();
+                }
             } finally {
                 // Never drop the only reference to a writable VM unless it is known
                 // stopped. A transient Binder error must not become a forced stop.
                 boolean stopped = running == null || !attemptedStart;
                 if (!stopped) try { stopped = !running.isAlive(); } catch (Exception ignored) { }
                 synchronized (guard) {
-                    starting = false;
-                    if (stopped && (child == running || child == null)) stopped();
+                    if (ownerFinished == finished) {
+                        starting = false;
+                        if (stopped && (child == running || child == null)) stopped();
+                    }
                 }
                 finished.countDown();
                 spawned.countDown();
@@ -200,6 +225,56 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         }
     }
 
+    @Override public String session(String operation, String token, boolean keepMemory) {
+        authorize();
+        synchronized (guard) {
+            String result;
+            if ("acquire".equals(operation) && stopping) result = "busy";
+            else result = sessions.update(operation, token, keepMemory, SystemClock.elapsedRealtime());
+            if ("acquired".equals(result)) idleFailure = null;
+            guard.notifyAll();
+            try { return new JSONObject(report()).put("session_status", result).toString(); }
+            catch (Exception error) { return "{\"status\":\"error\",\"reason\":\"report_failed\"}"; }
+        }
+    }
+
+    private void idleIfUnused(ArchVmInstance running) {
+        synchronized (guard) {
+            if (child != running || !ready || stopping || suspended || idleFailure != null) return;
+            sessions.expire(SystemClock.elapsedRealtime());
+            if (!sessions.shouldIdle(bridge == null ? 0 : bridge.connections())) return;
+            if (sessions.keepMemory()) {
+                try {
+                    if (!running.supportsSuspend()) throw new UnsupportedOperationException("AVF suspend unavailable");
+                    running.suspend();
+                    suspended = true;
+                    if (network != null) network.setSuspended(true);
+                } catch (Exception error) {
+                    // Preserve the guest if suspend is unavailable or partially failed.
+                    if (suspended) try { running.resume(); suspended = false; } catch (Exception ignored) { }
+                    if (network != null) try { network.setSuspended(false); } catch (Exception ignored) { }
+                    idleFailure = "suspend_failed: " + error.getClass().getSimpleName();
+                }
+                return;
+            }
+            // Claim shutdown while holding the same lock used to acquire new sessions.
+            stopping = true;
+        }
+        stopOwned();
+    }
+
+    // Resume the helper first. If the guest cannot resume, pause the helper again
+    // and keep the reported state consistent with the guest.
+    private void resumeOwned(ArchVmInstance running) throws Exception {
+        if (network != null) network.setSuspended(false);
+        try { running.resume(); }
+        catch (Exception error) {
+            if (network != null) try { network.setSuspended(true); } catch (Exception ignored) { }
+            throw error;
+        }
+        suspended = false;
+    }
+
     @Override public String status() { authorize(); synchronized (guard) { return report(); } }
     @Override public String stop() { authorize(); return stopOwned(); }
 
@@ -209,8 +284,17 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         synchronized (guard) {
             if (starting) return "{\"status\":\"busy\",\"reason\":\"start_in_progress\"}";
             running = child;
+            if (suspended && running != null) {
+                try {
+                    resumeOwned(running);
+                } catch (Exception error) {
+                    idleFailure = "resume_before_shutdown_failed";
+                    return report();
+                }
+            }
             finished = ownerFinished;
             stopping = ownerActive;
+            guard.notifyAll();
         }
         if (running != null) {
             try {
@@ -223,7 +307,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (running.isAlive()) {
                     synchronized (guard) { failure = "shutdown_timeout_guest_left_running"; }
                 } else {
-                    finished.await(1, TimeUnit.SECONDS);
+                    // The idle monitor itself can initiate shutdown; it cannot await itself.
+                    if (!"arch-vm-owner".equals(Thread.currentThread().getName()))
+                        finished.await(1, TimeUnit.SECONDS);
                     synchronized (guard) { if (child == running) stopped(); }
                 }
             } catch (Exception error) {
@@ -234,7 +320,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     private void stopped() {
-        ownerActive = stopping = false;
+        ownerActive = stopping = suspended = false;
+        sessions.clear();
+        guard.notifyAll();
         if (bridge != null) bridge.close();
         bridge = null;
         if (network != null) network.close();
@@ -260,9 +348,14 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 memoryPreferenceError = "Invalid saved RAM preference: " + invalid.getClass().getSimpleName();
             }
             return new JSONObject().put("status", failure != null ? "error" : starting ? "starting"
-                            : ownerActive ? stopping ? "stopping" : ready ? "ready" : "booting" : "stopped")
+                            : ownerActive ? stopping ? "stopping" : suspended ? "suspended" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())
                     .put("vm_name", "termux-arch-v2").put("running", ownerActive)
+                    .put("suspended", suspended).put("session_lifecycle", true)
+                    .put("active_sessions", sessions.count())
+                    .put("ssh_connections", bridge == null ? 0 : bridge.connections())
+                    .put("idle_policy", !sessions.isManaged() ? "manual" : sessions.keepMemory() ? "suspend" : "shutdown")
+                    .put("idle_error", idleFailure == null ? JSONObject.NULL : idleFailure)
                     .put("guest_boot", ready ? "verified" : "not_verified")
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
                     .put("root_read_only", false).put("network_enabled", true)

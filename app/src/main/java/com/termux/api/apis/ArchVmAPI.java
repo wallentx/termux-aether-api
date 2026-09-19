@@ -19,8 +19,10 @@ import rikka.shizuku.Shizuku;
 public final class ArchVmAPI {
     private ArchVmAPI() {}
 
-    public static JSONObject call(Context context, String operation, String publicKey, String memory) throws org.json.JSONException {
-        if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")) {
+    public static JSONObject call(Context context, String operation, String publicKey, String memory, String token, boolean keepMemory) throws org.json.JSONException {
+        if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")
+                && !operation.equals("arch-session-acquire") && !operation.equals("arch-session-renew")
+                && !operation.equals("arch-session-release")) {
             return new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
         }
         final int memoryMiB;
@@ -58,6 +60,9 @@ public final class ArchVmAPI {
                     case "arch-start": return memoryMiB == 0 ? service.start(publicKey)
                             : service.startWithMemory(publicKey, memoryMiB);
                     case "arch-stop": return service.stop();
+                    case "arch-session-acquire": return service.session("acquire", token, keepMemory);
+                    case "arch-session-renew": return service.session("renew", token, false);
+                    case "arch-session-release": return service.session("release", token, false);
                     default: return service.status();
                 }
             }).get(16, TimeUnit.SECONDS);

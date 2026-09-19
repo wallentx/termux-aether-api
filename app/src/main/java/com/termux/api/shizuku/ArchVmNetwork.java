@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit;
 
 /** One private pipe/vsock packet transport. Opens no Android listening ports. */
 final class ArchVmNetwork implements Closeable {
-    private volatile boolean closed;
+    private volatile boolean closed, suspended;
     private volatile String state = "connecting";
     private volatile String error;
     private ParcelFileDescriptor guest;
@@ -22,7 +22,11 @@ final class ArchVmNetwork implements Closeable {
         daemon(() -> run(vm, base), "arch-network-owner");
     }
 
-    String state() { return state; }
+    String state() { return suspended ? "suspended" : state; }
+    synchronized void setSuspended(boolean value) throws Exception {
+        if (backend != null) Os.kill(Math.toIntExact(backend.pid()), value ? OsConstants.SIGSTOP : OsConstants.SIGCONT);
+        suspended = value;
+    }
     String error() { return error; }
 
     private void run(ArchVmInstance vm, File base) {
@@ -48,6 +52,7 @@ final class ArchVmNetwork implements Closeable {
                 // Android's libc resolver follows Android network/DNS policy.
                 builder.environment().put("GODEBUG", "netdns=cgo");
                 backend = process = builder.start();
+                if (suspended) Os.kill(Math.toIntExact(process.pid()), OsConstants.SIGSTOP);
             }
             daemon(() -> diagnostics(process), "arch-network-log");
             daemon(() -> {
@@ -125,6 +130,9 @@ final class ArchVmNetwork implements Closeable {
         if (backend != null) {
             final java.lang.Process process = backend;
             backend = null;
+            // A stopped process cannot handle SIGTERM until it is resumed.
+            if (suspended) try { Os.kill(Math.toIntExact(process.pid()), OsConstants.SIGCONT); }
+            catch (Exception ignored) { }
             process.destroy();
             daemon(() -> {
                 try { if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly(); }

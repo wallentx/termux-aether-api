@@ -5,4 +5,5 @@ interface IArchVmService {
     String status() = 2;
     String stop() = 3;
     String startWithMemory(String publicKey, int memoryMiB) = 4;
+    String session(String operation, String token, boolean keepMemory) = 5;
 }
