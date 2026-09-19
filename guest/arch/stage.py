@@ -2,9 +2,11 @@
 """Stage a verified CI artifact through an already paired ADB connection. No builds."""
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 import uuid
 
 BASE = "/data/local/tmp/termux-arch-v1"
@@ -37,13 +39,17 @@ def main():
     shell(f"test ! -e {BASE} && test ! -L {BASE} && umask 077 && mkdir {stage}")
     # Leave a failed staging directory for inspection; never delete an existing guest.
     subprocess.run(adb + ["push", str(args.artifact / "Image"), stage + "/Image"], check=True, timeout=180)
-    unpack = subprocess.Popen(["zstd", "-d", "-c", str(args.artifact / "arch-rootfs.img.zst")], stdout=subprocess.PIPE)
-    try:
-        shell(f"umask 077; set -eC; cat > {stage}/arch-rootfs.img", stdin=unpack.stdout)
-    finally:
-        unpack.stdout.close()
-        if unpack.wait(timeout=10) != 0:
-            raise RuntimeError("Guest decompression failed")
+    # Decompress the CI artifact into a sparse temporary file so adb can use its
+    # compressed sync protocol. Streaming raw bytes through adb shell sends all
+    # 6 GiB over Wi-Fi, including the empty filesystem space.
+    with tempfile.TemporaryDirectory(prefix="termux-arch-stage-", dir=os.environ.get("TMPDIR")) as work:
+        disk = Path(work) / "arch-rootfs.img"
+        subprocess.run(["zstd", "-d", "--sparse", "--no-progress", "-o", str(disk),
+                        str(args.artifact / "arch-rootfs.img.zst")], check=True, timeout=300)
+        if not 1024 * 1024 <= disk.stat().st_size <= 8 * 1024**3:
+            raise ValueError("Unexpected guest disk size")
+        subprocess.run(adb + ["push", "-z", "zstd", str(disk), stage + "/arch-rootfs.img"],
+                       check=True, timeout=900)
     shell(f"chmod 600 {stage}/Image {stage}/arch-rootfs.img && "
           f"test ! -e {BASE} && test ! -L {BASE} && mv -T {stage} {BASE}")
     print("Guest staged. In Termux: termux-arch-vm --start")

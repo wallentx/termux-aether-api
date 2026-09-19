@@ -151,7 +151,8 @@ termux-arch-vm --stop
 
 Staging verifies checksums before transfer, uses a new private shell-owned
 directory, and refuses to replace an existing guest. It needs about 6 GiB of Pixel
-storage plus the downloaded compressed artifact on the host. Installation and
+storage, plus the compressed artifact and a temporary sparse disk file (up to
+6 GiB) on the host. ADB compresses the disk transfer over Wi-Fi. Installation and
 checksums are separate from ongoing VM lifecycle operations. A rolling upstream
 tarball change intentionally fails the pinned snapshot check until reviewed.
 
@@ -183,3 +184,54 @@ owned Shizuku VM service. It finally verifies the replacement service reports
 stopped. The operator must also confirm the owned VM disappeared from Android's
 VM list; restarting a service alone does not prove guest cleanup. Results and
 console output are retained in `report.json`.
+
+### Pixel acceptance result - 2026-09-18
+
+API APK `41f45a4` passed 17 Java tests and was installed on the Pixel. CLI commit
+`0fbae82` passed 17 Python tests. Guest CI run `35405911121` built and boot-checked
+the image at `30b95be`; the published SHA256 checksums were verified before staging.
+No build ran on either phone.
+
+The real Termux app runtime (UID 10445, `untrusted_app` SELinux domain) successfully
+booted fresh Arch Linux ARM with Pacman 7.1.0 and Linux 6.18.52-termux-avf. Android's
+VM list recorded the named instance with requester UID 2000, and the owned console
+identified crosvm using `/dev/kvm`. There was no QEMU execution on the Pixel.
+
+| Check | Result |
+| --- | --- |
+| First boot readiness | 3,477 ms; CID 2051 |
+| Repeated start | Reused CID 2051 and the same readiness timestamp |
+| Clean stop | Guest shutdown marker, process exit 0 |
+| Restart readiness | 6,605 ms; CID 2052 |
+| Owner process killed | CID 2052 disappeared; all other entries matched the immediate pre-kill snapshot |
+| Fresh boot after owner death | 1,953 ms; CID 2053; ownership lock released correctly |
+| Final cleanup | Clean exit 0; no owned VM or VM service remained |
+
+These are three functional smoke-test observations from the service's launch-to-
+readiness timer, not a statistically controlled benchmark or end-to-end `æ`
+latency. The repeated-start CLI round trip was about 897 ms, including API
+transport. No PRoot speed comparison has been made. Preserve the distinction when
+adding the lower-overhead guest command channel.
+
+### Headless native Termux testing
+
+A debuggable Termux installation can receive a same-UID intent through its
+installed `termux-am`. TermuxService then launches the test as a real app task:
+
+```sh
+adb -s IP:PORT shell run-as com.termux /system/bin/sh \
+  /data/data/com.termux/files/usr/bin/am startservice --user 0 \
+  -n com.termux/.app.TermuxService -a com.termux.service_execute \
+  -d com.termux.file:///data/data/com.termux/files/usr/bin/python \
+  --esa com.termux.execute.arguments /data/data/com.termux/files/home/REPORT_DIR/device_test.py,/data/data/com.termux/files/home/REPORT_DIR \
+  --ez com.termux.execute.background true
+```
+
+Stage the script and create a unique report directory first; this example assumes
+paths without commas. Verify the resulting process's UID, SELinux context **and
+parent process**, not merely the success of `am startservice`. The tested child
+had UID 10445, `u:r:untrusted_app:s0:...`, and Termux's app process as its parent.
+Directly executing the Python test under `adb shell` or `run-as` is not equivalent.
+The service remains non-exported and no external-app execution setting or broad
+permission grant is needed. This command testing route needs no keyboard input or
+screen unlock; visual UI tests still need the display.

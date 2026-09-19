@@ -86,7 +86,11 @@ try:
         time.sleep(1)
     value = invoke("status")
     assert value["status"] == "stopped" and value["running"] is False, value
-    invoke("stop")
+    # A fresh boot also proves the dead owner did not leave a held native lock.
+    invoke("start")
+    ready()
+    stopped = invoke("stop")
+    assert stopped["running"] is False and stopped["exit_code"] == 0, stopped
     save("passed")
 except Exception as error:
     report["error"] = str(error)
