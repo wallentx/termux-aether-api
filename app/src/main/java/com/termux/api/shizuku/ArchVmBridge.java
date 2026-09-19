@@ -21,17 +21,14 @@ final class ArchVmBridge implements Closeable {
     private final Set<ParcelFileDescriptor> guests = new HashSet<>();
     private boolean closed;
 
-    @Keep private static native int connectVsock(int cid) throws java.io.IOException;
-
-    ArchVmBridge(String library, int cid) throws Exception {
-        System.load(library);
+    ArchVmBridge(ArchVmInstance vm) throws Exception {
         listener = new ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"));
-        daemon(() -> accept(cid), "arch-ssh-listener");
+        daemon(() -> accept(vm), "arch-ssh-listener");
     }
 
     int port() { return listener.getLocalPort(); }
 
-    private void accept(int cid) {
+    private void accept(ArchVmInstance vm) {
         try {
             while (!listener.isClosed()) {
                 Socket socket = listener.accept();
@@ -39,15 +36,15 @@ final class ArchVmBridge implements Closeable {
                     if (closed || clients.size() >= 8) { socket.close(); continue; }
                     clients.add(socket);
                 }
-                daemon(() -> relay(socket, cid), "arch-ssh-relay");
+                daemon(() -> relay(socket, vm), "arch-ssh-relay");
             }
         } catch (Exception ignored) { close(); }
     }
 
-    private void relay(Socket socket, int cid) {
+    private void relay(Socket socket, ArchVmInstance vm) {
         ParcelFileDescriptor guest = null;
         try {
-            guest = ParcelFileDescriptor.adoptFd(connectVsock(cid));
+            guest = vm.connect();
             final ParcelFileDescriptor descriptor = guest;
             synchronized (this) {
                 if (closed) return;

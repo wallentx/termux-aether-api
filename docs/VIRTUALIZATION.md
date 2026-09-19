@@ -129,7 +129,12 @@ before replacing its APK or staged files. Staging refuses to overwrite an existi
 v2 installation; image upgrades must preserve its data explicitly.
 
 SSH runs only on guest loopback. A guest relay accepts only host-CID vsock traffic
-on port 2222. The Shizuku service binds a random Android loopback port and relays
+on port 2222. The Shizuku service creates the VM through the platform AVF Binder
+interface and requests sockets from that owned handle. This respects SELinux's
+prohibition on shell-created raw vsock sockets. The private framework surface is
+version-dependent and fails explicitly when unavailable; the normal app preflight
+still does not bypass its restrictions. The service holds an exclusive disk-owner
+lock before writing configuration or attaching storage. It binds a random Android loopback port and relays
 at most eight sessions to the fixed port of its owned guest. Other Android apps
 can reach that loopback listener but cannot authenticate without the private key.
 Password login, SSH forwarding and guest network adapters are disabled. The
