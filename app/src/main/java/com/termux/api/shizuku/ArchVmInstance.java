@@ -54,7 +54,9 @@ final class ArchVmInstance {
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
                     "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
                             + (System.currentTimeMillis() / 1000));
-            customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, true);
+            // Pixel's current preview virtmgr emits --net, but its crosvm rejects
+            // that option before boot. Keep native NIC off until the host is fixed.
+            customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
                     diskType.getMethod("RWDisk", String.class).invoke(null, new File(base, "arch-rootfs.img").getPath()));
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
@@ -70,7 +72,7 @@ final class ArchVmInstance {
             Method rawMethod = frameworkConfig.getClass().getDeclaredMethod("toVsRawConfig");
             rawMethod.setAccessible(true);
             Object raw = emptyArrays(rawMethod.invoke(frameworkConfig));
-            set(raw, "networkSupported", true);
+            set(raw, "networkSupported", false);
             files.add((ParcelFileDescriptor)raw.getClass().getField("kernel").get(raw));
             Object disks = raw.getClass().getField("disks").get(raw);
             for (int i = 0; i < Array.getLength(disks); i++) {
