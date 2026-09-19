@@ -14,7 +14,9 @@ import java.util.List;
 
 /** Uses AVF's owned Binder handle: SELinux forbids raw vsock creation by shell. */
 final class ArchVmInstance {
-    static final long MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
+    // Geekbench 7 ARM preview exceeded the former 4 GiB guest ceiling and was
+    // killed by the guest OOM handler during its multicore workloads.
+    static final long MEMORY_BYTES = 8L * 1024 * 1024 * 1024;
     private static final String AIDL = "android.system.virtualizationservice.";
     // Keep the platform service's bootstrap socket alive for this VM's lifetime.
     private final Object virtualizationService;
