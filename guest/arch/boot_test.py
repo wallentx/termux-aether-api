@@ -30,9 +30,9 @@ def main():
                 'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
                 '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
                 '-append', 'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_ci=1',
-                '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-device,drive=root',
-                '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-device,drive=seed',
-                '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:22', '-device', 'virtio-net-device,netdev=net',
+                '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
+                '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
+                '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:22', '-device', 'virtio-net-pci,netdev=net',
                 '-device', 'virtio-serial-device', '-chardev', 'stdio,id=console,signal=off',
                 '-device', 'virtconsole,chardev=console', '-display', 'none'],
                 stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
