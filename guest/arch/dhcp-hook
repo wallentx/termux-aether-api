@@ -1,11 +1,11 @@
 #!/usr/bin/bash
 # Called by dhcpcd after it applies addresses/routes. Never evaluate DHCP values.
 set -eu
-[[ ${interface:-} == eth0 ]] || exit 0
+[[ ${interface:-} == eth0 || ${interface:-} == avf0 ]] || exit 0
+target=/run/termux-network/resolv.$interface.conf
 case ${reason:-} in
     BOUND|RENEW|REBIND|REBOOT|INFORM)
         umask 022
-        target=/run/termux-network/resolv.conf
         temporary=$(mktemp /run/termux-network/resolv.XXXXXX)
         trap 'rm -f -- "$temporary"' EXIT
         printf '# Managed by termux-dhcp-hook\n' > "$temporary"
@@ -18,8 +18,11 @@ case ${reason:-} in
         done
         chmod 644 "$temporary"
         mv -f -- "$temporary" "$target"
+        if [[ $interface == avf0 || ! -e /run/termux-network/resolv.avf0.conf ]]; then
+            ln -sfn "$target" /run/termux-network/resolv.conf
+        fi
         ;;
     EXPIRE|FAIL|STOP|STOPPED|NOCARRIER|DEPARTED)
-        rm -f /run/termux-network/resolv.conf
+        rm -f "$target"
         ;;
 esac

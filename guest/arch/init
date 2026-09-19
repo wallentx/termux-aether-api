@@ -46,11 +46,12 @@ if [[ ! -e /etc/pacman.d/gnupg/.termux-initialized ]]; then
     touch /etc/pacman.d/gnupg/.termux-initialized
 fi
 ip link set lo up
-/usr/local/sbin/termux-vm-network > /run/termux-network.log 2>&1 &
 if $ci; then
+    /usr/local/sbin/termux-vm-network eth0 > /run/termux-network.log 2>&1 &
     # Only CI exposes SSH on Ethernet. Production SSH stays on loopback + vsock.
     /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux -o ListenAddress=0.0.0.0:2222 &
 else
+    /usr/local/sbin/termux-vm-network > /run/termux-network.log 2>&1 &
     /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux &
     /usr/local/sbin/termux-vsock-ssh &
     vsock_pid=$!

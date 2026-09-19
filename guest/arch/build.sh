@@ -57,6 +57,8 @@ aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/landlock-ch
 sudo install -m 755 landlock-check root/usr/local/bin/termux-landlock-check
 aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/shutdown.c" -o vm-shutdown
 sudo install -m 755 vm-shutdown root/usr/local/sbin/termux-vm-shutdown
+aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/vsock-net.c" -o vsock-net
+sudo install -m 755 vsock-net root/usr/local/sbin/termux-vsock-net
 # Small update payload for existing guests: never replace their writable disk.
 mkdir -p update
 install -m 755 "$source_dir/init" update/termux-vm-init
@@ -64,6 +66,7 @@ install -m 755 "$source_dir/network" update/termux-vm-network
 install -m 755 "$source_dir/dhcp-hook" update/termux-dhcp-hook
 install -m 755 landlock-check update/termux-landlock-check
 install -m 755 vm-shutdown update/termux-vm-shutdown
+install -m 755 vsock-net update/termux-vsock-net
 tar -C update -cf "$out/guest-update.tar" .
 sudo mkdir -p root/dev root/proc root/sys root/run root/tmp
 sudo test -c root/dev/console || sudo mknod -m 600 root/dev/console c 5 1
@@ -74,4 +77,4 @@ sudo chown "$(id -u):$(id -g)" "$out/arch-rootfs.img"
 python3 "$source_dir/boot_test.py" "$out" "$work"
 zstd -T0 -3 --rm "$out/arch-rootfs.img"
 cd "$out"
-sha256sum Image arch-rootfs.img.zst guest-update.tar kernel.config provenance.txt rootfs-source.sha256 ci-console.txt > SHA256SUMS
+sha256sum Image arch-rootfs.img.zst guest-update.tar arch-network-host network-host-LICENSES.txt kernel.config provenance.txt rootfs-source.sha256 ci-console.txt > SHA256SUMS
