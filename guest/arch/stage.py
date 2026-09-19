@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import uuid
 
-BASE = "/data/local/tmp/termux-arch-v1"
+BASE = "/data/local/tmp/termux-arch-v2"
 
 
 def verify(directory):
@@ -52,7 +52,7 @@ def main():
                        check=True, timeout=900)
     shell(f"chmod 600 {stage}/Image {stage}/arch-rootfs.img && "
           f"test ! -e {BASE} && test ! -L {BASE} && mv -T {stage} {BASE}")
-    print("Guest staged. In Termux: termux-arch-vm --start")
+    print("Guest staged. In Termux: termux-arch --shell")
 
 
 if __name__ == "__main__":

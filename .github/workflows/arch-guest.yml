@@ -2,7 +2,7 @@ name: Arch AVF guest
 on:
   push:
     branches: ['wallentx/**']
-    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', '.github/workflows/arch-guest.yml']
+    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', '.github/workflows/arch-guest.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
       - name: Install guest build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev libarchive-tools e2fsprogs zstd qemu-system-arm
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev libarchive-tools e2fsprogs zstd qemu-system-arm openssh-client
       - name: Restore guest kernel
         id: kernel
         uses: actions/cache/restore@v4
