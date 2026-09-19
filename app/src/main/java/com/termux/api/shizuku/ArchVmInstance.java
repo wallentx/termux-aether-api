@@ -57,6 +57,9 @@ final class ArchVmInstance {
             // Pixel's current preview virtmgr emits --net, but its crosvm rejects
             // that option before boot. Keep native NIC off until the host is fixed.
             customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);
+            // toVsRawConfig maps this flag to the virtio balloon device. Our owner
+            // controls it explicitly; the framework's automatic policy is not used.
+            customBuilderType.getMethod("useAutoMemoryBalloon", boolean.class).invoke(custom, true);
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
                     diskType.getMethod("RWDisk", String.class).invoke(null, new File(base, "arch-rootfs.img").getPath()));
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
