@@ -40,15 +40,31 @@ sha256sum arch.tar.gz > "$out/rootfs-source.sha256"
 printf 'source=%s\nkernel=%s\ncommit=%s\n' "$arch_url" "$kernel_version" "$GITHUB_SHA" > "$out/provenance.txt"
 sudo bsdtar -xpf arch.tar.gz -C root
 sudo install -m 755 "$source_dir/init" root/usr/local/sbin/termux-vm-init
+sudo install -m 755 "$source_dir/network" root/usr/local/sbin/termux-vm-network
+sudo install -D -m 755 "$source_dir/dhcp-hook" root/usr/local/libexec/termux-dhcp-hook
+sudo ln -sfn /run/termux-network/resolv.conf root/etc/resolv.conf
 # No reusable keys or default passwords in published images. Root's impossible
 # hash keeps the account usable for public-key SSH with UsePAM=no.
 sudo sed -i -E 's/^root:[^:]*:/root:*:/; s/^alarm:[^:]*:/alarm:!:/' root/etc/shadow
 sudo rm -f root/etc/ssh/ssh_host_* root/root/.ssh/authorized_keys
 sudo test -x root/usr/bin/sshd
 sudo test -x root/usr/bin/ip
+sudo test -x root/usr/bin/dhcpcd
 sudo install -m 600 "$source_dir/sshd_config" root/etc/ssh/sshd_config.termux
 aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/vsock-ssh.c" -o vsock-ssh
 sudo install -m 755 vsock-ssh root/usr/local/sbin/termux-vsock-ssh
+aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/landlock-check.c" -o landlock-check
+sudo install -m 755 landlock-check root/usr/local/bin/termux-landlock-check
+aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/shutdown.c" -o vm-shutdown
+sudo install -m 755 vm-shutdown root/usr/local/sbin/termux-vm-shutdown
+# Small update payload for existing guests: never replace their writable disk.
+mkdir -p update
+install -m 755 "$source_dir/init" update/termux-vm-init
+install -m 755 "$source_dir/network" update/termux-vm-network
+install -m 755 "$source_dir/dhcp-hook" update/termux-dhcp-hook
+install -m 755 landlock-check update/termux-landlock-check
+install -m 755 vm-shutdown update/termux-vm-shutdown
+tar -C update -cf "$out/guest-update.tar" .
 sudo mkdir -p root/dev root/proc root/sys root/run root/tmp
 sudo test -c root/dev/console || sudo mknod -m 600 root/dev/console c 5 1
 truncate -s 6G "$out/arch-rootfs.img"
@@ -58,4 +74,4 @@ sudo chown "$(id -u):$(id -g)" "$out/arch-rootfs.img"
 python3 "$source_dir/boot_test.py" "$out" "$work"
 zstd -T0 -3 --rm "$out/arch-rootfs.img"
 cd "$out"
-sha256sum Image arch-rootfs.img.zst kernel.config provenance.txt rootfs-source.sha256 ci-console.txt > SHA256SUMS
+sha256sum Image arch-rootfs.img.zst guest-update.tar kernel.config provenance.txt rootfs-source.sha256 ci-console.txt > SHA256SUMS

@@ -1,0 +1,12 @@
+#!/usr/bin/bash
+# DHCP owns addresses/routes; our hook supplies DNS without requiring systemd.
+set -eu
+install -d -m 755 /run/termux-network
+if [[ ! -e /sys/class/net/eth0 ]]; then
+    echo 'TERMUX_ARCH_NETWORK: no virtual Ethernet adapter'
+    exit 0
+fi
+ip link set eth0 up
+# Keep retrying offline and renewing leases without delaying local SSH access.
+exec dhcpcd -4 -B -L -t 0 -f /dev/null -o domain_name_servers \
+    -c /usr/local/libexec/termux-dhcp-hook eth0
