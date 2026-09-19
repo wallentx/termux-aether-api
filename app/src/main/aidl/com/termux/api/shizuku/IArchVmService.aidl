@@ -4,4 +4,5 @@ interface IArchVmService {
     String start(String publicKey) = 1;
     String status() = 2;
     String stop() = 3;
+    String startWithMemory(String publicKey, int memoryMiB) = 4;
 }

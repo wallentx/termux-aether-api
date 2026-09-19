@@ -14,9 +14,6 @@ import java.util.List;
 
 /** Uses AVF's owned Binder handle: SELinux forbids raw vsock creation by shell. */
 final class ArchVmInstance {
-    // Geekbench 7 ARM preview exceeded the former 4 GiB guest ceiling and was
-    // killed by the guest OOM handler during its multicore workloads.
-    static final long MEMORY_BYTES = 8L * 1024 * 1024 * 1024;
     private static final String AIDL = "android.system.virtualizationservice.";
     // Keep the platform service's bootstrap socket alive for this VM's lifetime.
     private final Object virtualizationService;
@@ -27,7 +24,7 @@ final class ArchVmInstance {
     final InputStream console;
     final OutputStream input;
 
-    ArchVmInstance(Context context, File base) throws Exception {
+    ArchVmInstance(Context context, File base, long memoryBytes) throws Exception {
         Class<?> platform = Class.forName("android.system.virtualmachine.VirtualizationService");
         Method instance = platform.getDeclaredMethod("getInstance");
         instance.setAccessible(true);
@@ -69,7 +66,7 @@ final class ArchVmInstance {
             Object builder = builderType.getConstructor(Context.class).newInstance(context);
             builderType.getMethod("setCustomImageConfig", customType).invoke(builder, image);
             builderType.getMethod("setProtectedVm", boolean.class).invoke(builder, false);
-            builderType.getMethod("setMemoryBytes", long.class).invoke(builder, MEMORY_BYTES);
+            builderType.getMethod("setMemoryBytes", long.class).invoke(builder, memoryBytes);
             int matchHost = Class.forName("android.system.virtualmachine.VirtualMachineConfig")
                     .getField("CPU_TOPOLOGY_MATCH_HOST").getInt(null);
             builderType.getMethod("setCpuTopology", int.class).invoke(builder, matchHost);

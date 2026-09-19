@@ -169,7 +169,7 @@ initial shell is guest root; it does not grant Android root or expose host paths
 The bridge uses the standard SSH protocol for PTY resize, interrupts, binary I/O,
 separate stdout/stderr and exit codes. No guest command is executed by Android's
 shell. The API continues to accept only fixed lifecycle operations and an
-Ed25519 public key, never arbitrary host paths or commands.
+Ed25519 public key and optional RAM size, never arbitrary host paths or commands.
 
 `æ command args...` executes an argument vector. `termux-arch --cwd /root -- command
 args...` selects an explicit guest working directory. Commands launched from
@@ -178,6 +178,32 @@ Termux home default to guest `/root`; commands from other host directories requi
 fails before command execution. `Æ` opens a login shell in guest home. Exiting a
 shell keeps the VM alive; `termux-arch-vm --stop` shuts it down. Failed commands are
 never automatically retried, since they may have changed files already.
+
+RAM is a launch setting, independent of the APK and guest disk:
+
+```sh
+termux-arch-vm --stop
+termux-arch-vm --start --memory 8G
+# Or start and open a shell: termux-arch --memory 8G --shell
+```
+
+`--memory` accepts GiB (`8G`, `1.5GiB`) or MiB (`8192M`, `8192`). The value
+must resolve to positive whole MiB and cannot exceed host physical RAM. The
+initial default is 8 GiB. After a successful boot, the owner atomically saves
+the choice to its private `/data/local/tmp/termux-arch-v2/memory-mib` file.
+Later launches through `Æ`, `æ`, or either CLI reuse that value, including
+after an owner-service restart. A failed boot does not replace the saved choice.
+Changing RAM while the VM is running returns an error without stopping the VM
+or executing a guest command; stop it cleanly first. Repeating its current size
+reuses the existing VM. `--start --memory` waits for readiness and exits nonzero
+if launch fails; the legacy lifecycle commands without `--memory` return JSON
+whose `status` must be checked separately from transport exit status.
+
+Status reports `memory_mib` for the current/last launch and
+`next_start_memory_mib` for the saved/default choice. Guest usable memory is
+slightly smaller because the kernel reserves some RAM. This changes the ceiling
+at boot; automatic memory ballooning is not enabled. No APK reinstall is needed
+for subsequent RAM changes, and the guest disk and installed software are retained.
 
 CI validates the root image under QEMU with a management NIC, checks SSH,
 PTY allocation, binary stdin, separate output/exit code and persistence across
@@ -192,7 +218,7 @@ policy and internet reachability require Pixel testing. No PRoot speedup is clai
 
 | Default | Reason / requirement to change |
 | --- | --- |
-| Host-matched vCPUs, 8 GiB RAM, 6 GiB disk | Exposes the host CPU topology for parallel workloads. Geekbench 7 ARM preview triggered guest OOM kills with the former 4 GiB ceiling. RAM is a fixed guest ceiling; disk growth and memory ballooning are separate changes. Android still schedules VM threads alongside other apps. |
+| Host-matched vCPUs, initially 8 GiB RAM, 6 GiB disk | Exposes the host CPU topology for parallel workloads. Geekbench 7 ARM preview triggered guest OOM kills with the former 4 GiB ceiling. Change the RAM ceiling with `--memory` at launch; disk growth and memory ballooning are separate changes. Android still schedules VM threads alongside other apps. |
 | Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
 | Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
 | No Android directory sharing | Requires an explicit host/guest sharing mechanism and selected paths. VIRTIO_FS is not enabled in the current kernel. |
