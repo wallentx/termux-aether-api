@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 public final class ArchVmUserService extends IArchVmService.Stub {
     private static final File BASE = new File("/data/local/tmp/termux-arch-v2");
     private final int ownerUid;
+    private final Context context;
     private final Object guard = new Object();
     private final StringBuilder output = new StringBuilder();
     private ArchVmInstance child;
@@ -36,7 +37,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private Long readyAfterMs;
     private CountDownLatch ownerFinished = new CountDownLatch(0);
 
-    @Keep public ArchVmUserService(Context context) { ownerUid = context.getApplicationInfo().uid; }
+    @Keep public ArchVmUserService(Context context) {
+        this.context = context;
+        ownerUid = context.getApplicationInfo().uid;
+    }
 
     private void authorize() {
         if (Binder.getCallingUid() != ownerUid) throw new SecurityException("Wrong UID");
@@ -101,7 +105,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             ArchVmInstance running = null;
             boolean attemptedStart = false;
             try {
-                running = new ArchVmInstance(BASE);
+                running = new ArchVmInstance(context, BASE);
                 synchronized (guard) { child = running; }
                 final ArchVmInstance current = running;
                 Thread drain = new Thread(() -> drain(current), "arch-vm-console");

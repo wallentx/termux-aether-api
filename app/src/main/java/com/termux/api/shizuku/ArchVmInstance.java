@@ -1,5 +1,6 @@
 package com.termux.api.shizuku;
 
+import android.content.Context;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import java.io.File;
@@ -23,7 +24,7 @@ final class ArchVmInstance {
     final InputStream console;
     final OutputStream input;
 
-    ArchVmInstance(File base) throws Exception {
+    ArchVmInstance(Context context, File base) throws Exception {
         Class<?> platform = Class.forName("android.system.virtualmachine.VirtualizationService");
         Method instance = platform.getDeclaredMethod("getInstance");
         instance.setAccessible(true);
@@ -42,32 +43,39 @@ final class ArchVmInstance {
         files.add(inputPipe[0]);
         boolean success = false;
         try {
-            Object raw = emptyArrays(type("VirtualMachineRawConfig").getConstructor().newInstance());
-            set(raw, "name", "termux-arch-v2");
-            set(raw, "instanceId", new byte[64]);
-            set(raw, "kernel", open(base, "Image", false, files));
-            set(raw, "params", "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1");
-            set(raw, "protectedVm", false);
-            set(raw, "memoryMib", 1024);
-            set(raw, "platformVersion", "~1.0");
-            set(raw, "consoleInputDevice", "hvc0");
+            // Let the installed framework populate its version-specific defaults.
+            // Android 17 preview's device-assignment schema differs from AOSP main.
+            Class<?> customType = Class.forName("android.system.virtualmachine.VirtualMachineCustomImageConfig");
+            Class<?> customBuilderType = Class.forName(customType.getName() + "$Builder");
+            Class<?> diskType = Class.forName(customType.getName() + "$Disk");
+            Object custom = customBuilderType.getConstructor().newInstance();
+            customBuilderType.getMethod("setName", String.class).invoke(custom, "termux-arch-v2");
+            customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, new File(base, "Image").getPath());
+            customBuilderType.getMethod("addParam", String.class).invoke(custom,
+                    "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1");
+            customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);
+            customBuilderType.getMethod("addDisk", diskType).invoke(custom,
+                    diskType.getMethod("RWDisk", String.class).invoke(null, new File(base, "arch-rootfs.img").getPath()));
+            customBuilderType.getMethod("addDisk", diskType).invoke(custom,
+                    diskType.getMethod("RODisk", String.class).invoke(null, new File(base, "authorized-key.bin").getPath()));
+            Object image = customBuilderType.getMethod("build").invoke(custom);
+            Class<?> builderType = Class.forName("android.system.virtualmachine.VirtualMachineConfig$Builder");
+            Object builder = builderType.getConstructor(Context.class).newInstance(context);
+            builderType.getMethod("setCustomImageConfig", customType).invoke(builder, image);
+            builderType.getMethod("setProtectedVm", boolean.class).invoke(builder, false);
+            builderType.getMethod("setMemoryBytes", long.class).invoke(builder, 1024L * 1024 * 1024);
+            builderType.getMethod("setConsoleInputDevice", String.class).invoke(builder, "hvc0");
+            Object frameworkConfig = builderType.getMethod("build").invoke(builder);
+            Method rawMethod = frameworkConfig.getClass().getDeclaredMethod("toVsRawConfig");
+            rawMethod.setAccessible(true);
+            Object raw = emptyArrays(rawMethod.invoke(frameworkConfig));
             set(raw, "networkSupported", false);
-            Object cpu = type("CpuOptions").getConstructor().newInstance();
-            Class<?> topology = type("CpuOptions$CpuTopology");
-            set(cpu, "cpuTopology", topology.getMethod("cpuCount", int.class).invoke(null, 1));
-            set(raw, "cpuOptions", cpu);
-            set(raw, "devices", type("AssignedDevices").getMethod("devices", String[].class)
-                    .invoke(null, (Object)new String[0]));
-            Class<?> diskType = type("DiskImage");
-            Object disks = Array.newInstance(diskType, 2);
-            String[] names = {"arch-rootfs.img", "authorized-key.bin"};
-            for (int i = 0; i < names.length; i++) {
-                Object disk = emptyArrays(diskType.getConstructor().newInstance());
-                set(disk, "image", open(base, names[i], i == 0, files));
-                set(disk, "writable", i == 0);
-                Array.set(disks, i, disk);
+            files.add((ParcelFileDescriptor)raw.getClass().getField("kernel").get(raw));
+            Object disks = raw.getClass().getField("disks").get(raw);
+            for (int i = 0; i < Array.getLength(disks); i++) {
+                Object disk = Array.get(disks, i);
+                files.add((ParcelFileDescriptor)disk.getClass().getField("image").get(disk));
             }
-            set(raw, "disks", disks);
             Class<?> configType = type("VirtualMachineConfig");
             Object config = configType.getMethod("rawConfig", raw.getClass()).invoke(null, raw);
             vm = serviceInterface.getMethod("createVm", configType, ParcelFileDescriptor.class,
@@ -110,12 +118,5 @@ final class ArchVmInstance {
                     && field.get(object) == null) field.set(object, Array.newInstance(field.getType().getComponentType(), 0));
         }
         return object;
-    }
-    private static ParcelFileDescriptor open(File base, String name, boolean write,
-                                             List<ParcelFileDescriptor> files) throws Exception {
-        ParcelFileDescriptor file = ParcelFileDescriptor.open(new File(base, name),
-                write ? ParcelFileDescriptor.MODE_READ_WRITE : ParcelFileDescriptor.MODE_READ_ONLY);
-        files.add(file);
-        return file;
     }
 }
