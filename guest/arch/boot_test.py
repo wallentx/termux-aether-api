@@ -6,6 +6,7 @@ import http.server
 import io
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tarfile
@@ -41,8 +42,19 @@ def main():
     server = http.server.ThreadingHTTPServer(('127.0.0.1', 0),
         functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(repository)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(('127.0.0.1', 0))
+    def echo_udp():
+        while True:
+            try:
+                packet, peer = udp.recvfrom(65535)
+                udp.sendto(packet, peer)
+            except OSError:
+                return
+    threading.Thread(target=echo_udp, daemon=True).start()
     with (out / 'ci-console.txt').open('wb') as log:
         for iteration in range(2):
+            network_host = network_guest = None
             process = subprocess.Popen([
                 'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
                 '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
@@ -78,13 +90,44 @@ def main():
                     time.sleep(1)
                 else:
                     raise TimeoutError(f'DHCP/SSH not ready: {connected}')
+                # Exercise the same packet protocol and guest TAP as production.
+                # SSH replaces AVF vsock only as the CI transport between the two.
+                backend = Path(os.environ['RUNNER_TEMP']) / 'arch-network-host-linux'
+                network_host = subprocess.Popen([str(backend), '--ci'], stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE, stderr=log)
+                network_guest = subprocess.Popen(ssh + ['termux-vsock-net --stdio'],
+                    stdin=network_host.stdout, stdout=network_host.stdin, stderr=log)
+                network_host.stdout.close()
+                network_host.stdin.close()
+                result = subprocess.run(ssh + [
+                    'for i in $(seq 1 30); do test ! -e /sys/class/net/avf0 || break; sleep .1; done; '
+                    'test -e /sys/class/net/avf0 && '
+                    'nohup termux-vm-network avf0 >/run/bridge-dhcp.log 2>&1 </dev/null &'],
+                    capture_output=True, timeout=15)
+                assert result.returncode == 0, result
+                for _ in range(30):
+                    result = subprocess.run(ssh + [
+                        "ip -4 addr show avf0 | grep -q '192.168.127.2/24' && "
+                        "ip route get 198.51.100.1 | grep -q 'dev avf0' && "
+                        "getent ahostsv4 fixture.test | grep -q '192.168.127.254'"],
+                        capture_output=True, timeout=10)
+                    if result.returncode == 0:
+                        break
+                    time.sleep(1)
+                else:
+                    raise TimeoutError(f'Userspace bridge DHCP/DNS failed: {result}')
+                result = subprocess.run(ssh + [
+                    f"bash -c 'exec 3<>/dev/udp/192.168.127.254/{udp.getsockname()[1]}; "
+                    "printf udp-probe >&3; timeout 5 dd bs=9 count=1 status=none <&3'"],
+                    capture_output=True, timeout=15)
+                assert result.returncode == 0 and result.stdout == b'udp-probe', result
                 result = subprocess.run(ssh + ['date +%s'], capture_output=True, timeout=20)
                 assert result.returncode == 0 and abs(int(result.stdout) - time.time()) < 30, result
                 result = subprocess.run(ssh + ['termux-landlock-check'], capture_output=True, timeout=20)
                 assert result.returncode == 0, result
                 print(result.stdout.decode().strip())
                 config = ('[options]\nArchitecture = aarch64\nDownloadUser = alpm\nSigLevel = Never\n'
-                          f'[sandbox]\nServer = http://10.0.2.2:{server.server_port}\n')
+                          f'[sandbox]\nServer = http://fixture.test:{server.server_port}\n')
                 command = ("set -eu; ip -4 route show default | grep -q '^default '; "
                            "grep -q '^nameserver ' /etc/resolv.conf; "
                            "install -d -m 755 /tmp/pacman-sandbox-test; "
@@ -124,13 +167,23 @@ def main():
                 assert text.count('TERMUX_ARCH_STOPPING_V2') == iteration + 1
                 subprocess.run(['e2fsck', '-fn', str(disk)], check=True, timeout=30)
             finally:
+                for network_process in (network_guest, network_host):
+                    if network_process is not None:
+                        if network_process.poll() is None:
+                            network_process.terminate()
+                        try:
+                            network_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            network_process.kill()
+                            network_process.wait()
                 if process.poll() is None:
                     process.kill()
                     process.wait()
     print((out / 'ci-console.txt').read_text(errors='replace'))
     server.shutdown()
     server.server_close()
-    print('Landlock enforcement, DHCP, sandboxed Pacman download, SSH, persistence and clean shutdown passed')
+    udp.close()
+    print('Landlock enforcement, userspace TAP DHCP/DNS/TCP/UDP, sandboxed Pacman download, SSH, persistence and clean shutdown passed')
 
 
 if __name__ == '__main__':
