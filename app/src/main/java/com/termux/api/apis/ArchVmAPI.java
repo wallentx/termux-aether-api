@@ -6,6 +6,7 @@ import android.content.ServiceConnection;
 import android.os.IBinder;
 import com.termux.api.BuildConfig;
 import com.termux.api.shizuku.ArchVmUserService;
+import com.termux.api.shizuku.ArchVmMemory;
 import com.termux.api.shizuku.IArchVmService;
 import org.json.JSONObject;
 import java.util.concurrent.CompletableFuture;
@@ -18,9 +19,16 @@ import rikka.shizuku.Shizuku;
 public final class ArchVmAPI {
     private ArchVmAPI() {}
 
-    public static JSONObject call(Context context, String operation, String publicKey) throws org.json.JSONException {
+    public static JSONObject call(Context context, String operation, String publicKey, String memory) throws org.json.JSONException {
         if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")) {
             return new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
+        }
+        final int memoryMiB;
+        try {
+            memoryMiB = ArchVmMemory.parseRequest(memory);
+            if (memory != null && !operation.equals("arch-start")) throw new IllegalArgumentException();
+        } catch (IllegalArgumentException invalid) {
+            return new JSONObject().put("status", "error").put("reason", "invalid_memory_mib");
         }
         JSONObject access = ShizukuAPI.status(context);
         if (!"ok".equals(access.optString("status"))) return access;
@@ -47,7 +55,8 @@ public final class ArchVmAPI {
             IArchVmService service = IArchVmService.Stub.asInterface(connected.get(3, TimeUnit.SECONDS));
             String json = worker.submit(() -> {
                 switch (operation) {
-                    case "arch-start": return service.start(publicKey);
+                    case "arch-start": return memoryMiB == 0 ? service.start(publicKey)
+                            : service.startWithMemory(publicKey, memoryMiB);
                     case "arch-stop": return service.stop();
                     default: return service.status();
                 }

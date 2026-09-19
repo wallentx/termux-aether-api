@@ -1,6 +1,7 @@
 package com.termux.api.shizuku;
 
 import android.content.Context;
+import android.app.ActivityManager;
 import android.os.Binder;
 import android.os.Process;
 import android.os.SystemClock;
@@ -34,6 +35,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private boolean starting, ownerActive, stopping, ready, cleanShutdown;
     private int cid;
     private String hostKey, authorizedKey, failure;
+    private int memoryMiB;
+    private String memoryPreferenceError;
     private long startedAt;
     private Long readyAfterMs;
     private CountDownLatch ownerFinished = new CountDownLatch(0);
@@ -57,14 +60,33 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     @Override public String start(String publicKey) {
+        return startWithMemory(publicKey, 0);
+    }
+
+    @Override public String startWithMemory(String publicKey, int requestedMemoryMiB) {
         authorize();
+        if (requestedMemoryMiB < 0) return memoryError("invalid_memory_mib");
         CountDownLatch spawned = new CountDownLatch(1);
         CountDownLatch finished = new CountDownLatch(1);
+        final long launchMemoryBytes;
         synchronized (guard) {
             if (ownerActive) {
+                if (requestedMemoryMiB != 0 && requestedMemoryMiB != memoryMiB)
+                    return memoryError("memory_change_requires_stop");
                 if (publicKey != null && !publicKey.equals(authorizedKey))
                     return "{\"status\":\"error\",\"reason\":\"key_change_requires_stop\"}";
                 return report();
+            }
+            try {
+                int selected = requestedMemoryMiB == 0 ? savedMemoryMiB() : requestedMemoryMiB;
+                ActivityManager.MemoryInfo host = new ActivityManager.MemoryInfo();
+                ((ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE)).getMemoryInfo(host);
+                launchMemoryBytes = ArchVmMemory.bytes(selected, host.totalMem);
+                memoryMiB = selected;
+                memoryPreferenceError = null;
+            } catch (Exception invalid) {
+                memoryPreferenceError = invalid.getMessage();
+                return memoryError("invalid_memory_mib");
             }
             try {
                 validateFile(BASE, true, 0, 0);
@@ -106,7 +128,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             ArchVmInstance running = null;
             boolean attemptedStart = false;
             try {
-                running = new ArchVmInstance(context, BASE);
+                running = new ArchVmInstance(context, BASE, launchMemoryBytes);
                 synchronized (guard) { child = running; }
                 final ArchVmInstance current = running;
                 Thread drain = new Thread(() -> drain(current), "arch-vm-console");
@@ -159,6 +181,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                         network = new ArchVmNetwork(child, BASE);
                         ready = true;
                         readyAfterMs = SystemClock.elapsedRealtime() - startedAt;
+                        try { saveMemoryMiB(); memoryPreferenceError = null; }
+                        catch (Exception error) {
+                            memoryPreferenceError = "Could not save RAM preference: " + error.getClass().getSimpleName();
+                        }
                     }
                     if (output.indexOf("TERMUX_ARCH_STOPPING_V2") >= 0) cleanShutdown = true;
                     if (output.length() > 32768) output.delete(0, output.length() - 32768);
@@ -227,6 +253,12 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private String report() {
         try {
+            Object nextMemory;
+            try { nextMemory = savedMemoryMiB(); }
+            catch (Exception invalid) {
+                nextMemory = JSONObject.NULL;
+                memoryPreferenceError = "Invalid saved RAM preference: " + invalid.getClass().getSimpleName();
+            }
             return new JSONObject().put("status", failure != null ? "error" : starting ? "starting"
                             : ownerActive ? stopping ? "stopping" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())
@@ -235,7 +267,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
                     .put("root_read_only", false).put("network_enabled", true)
                     .put("cpu_topology", "match_host")
-                    .put("memory_mib", ArchVmInstance.MEMORY_BYTES / (1024 * 1024))
+                    .put("memory_mib", memoryMiB == 0 ? JSONObject.NULL : memoryMiB)
+                    .put("memory_configurable", true)
+                    .put("next_start_memory_mib", nextMemory)
+                    .put("memory_preference_error", memoryPreferenceError == null ? JSONObject.NULL : memoryPreferenceError)
                     .put("native_network_enabled", false)
                     .put("network_backend", "vsock_userspace_ipv4")
                     .put("network_bridge_state", network == null ? "not_started" : network.state())
@@ -250,6 +285,38 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("reason", failure == null ? JSONObject.NULL : failure)
                     .put("console_tail", output.toString()).toString();
         } catch (Exception error) { return "{\"status\":\"error\",\"reason\":\"report_failed\"}"; }
+    }
+
+    private String memoryError(String reason) {
+        synchronized (guard) {
+            try { return new JSONObject(report()).put("status", "error").put("reason", reason).toString(); }
+            catch (Exception ignored) { return "{\"status\":\"error\",\"reason\":\"invalid_memory_mib\"}"; }
+        }
+    }
+
+    private int savedMemoryMiB() throws Exception {
+        File file = new File(BASE, "memory-mib");
+        // Check dangling links too; never silently follow or overwrite one.
+        if (!file.exists() && !java.nio.file.Files.isSymbolicLink(file.toPath())) return ArchVmMemory.DEFAULT_MIB;
+        validateFile(file, false, 1, 16);
+        return ArchVmMemory.parseRequest(new String(java.nio.file.Files.readAllBytes(file.toPath()),
+                StandardCharsets.US_ASCII).trim());
+    }
+
+    private void saveMemoryMiB() throws Exception {
+        validateFile(BASE, true, 0, 0);
+        File file = new File(BASE, "memory-mib");
+        if (file.exists() || java.nio.file.Files.isSymbolicLink(file.toPath())) validateFile(file, false, 1, 16);
+        File temporary = File.createTempFile("memory-mib-", ".tmp", BASE);
+        try {
+            Os.chmod(temporary.getPath(), 0600);
+            try (FileOutputStream stream = new FileOutputStream(temporary)) {
+                stream.write((memoryMiB + "\n").getBytes(StandardCharsets.US_ASCII));
+                stream.getFD().sync();
+            }
+            java.nio.file.Files.move(temporary.toPath(), file.toPath(),
+                    java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally { temporary.delete(); }
     }
 
     static void validateFile(File file, boolean directory, long min, long max) throws Exception {
