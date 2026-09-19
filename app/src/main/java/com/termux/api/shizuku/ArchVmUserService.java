@@ -28,6 +28,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private final StringBuilder output = new StringBuilder();
     private ArchVmInstance child;
     private ArchVmBridge bridge;
+    private ArchVmNetwork network;
     private RandomAccessFile lockFile;
     private FileLock lock;
     private boolean starting, ownerActive, stopping, ready, cleanShutdown;
@@ -155,6 +156,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     if (hostKey == null) hostKey = ArchVmProtocol.hostKey(output.toString());
                     if (!ready && hostKey != null && output.indexOf("TERMUX_ARCH_READY_V2") >= 0) {
                         bridge = new ArchVmBridge(child);
+                        network = new ArchVmNetwork(child, BASE);
                         ready = true;
                         readyAfterMs = SystemClock.elapsedRealtime() - startedAt;
                     }
@@ -209,6 +211,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         ownerActive = stopping = false;
         if (bridge != null) bridge.close();
         bridge = null;
+        if (network != null) network.close();
+        network = null;
         if (child != null) child.closeConsole();
         child = null;
         releaseLock();
@@ -229,8 +233,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("vm_name", "termux-arch-v2").put("running", ownerActive)
                     .put("guest_boot", ready ? "verified" : "not_verified")
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
-                    .put("root_read_only", false).put("network_enabled", false)
-                    .put("network_backend", "none")
+                    .put("root_read_only", false).put("network_enabled", true)
+                    .put("native_network_enabled", false)
+                    .put("network_backend", "vsock_userspace_ipv4")
+                    .put("network_bridge_state", network == null ? "not_started" : network.state())
+                    .put("network_error", network == null || network.error() == null ? JSONObject.NULL : network.error())
                     .put("native_network_reason", "host_crosvm_rejects_net_option")
                     // A configured NIC does not prove DHCP, DNS or internet reachability.
                     .put("network_connectivity", "not_probed")
@@ -243,7 +250,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         } catch (Exception error) { return "{\"status\":\"error\",\"reason\":\"report_failed\"}"; }
     }
 
-    private static void validateFile(File file, boolean directory, long min, long max) throws Exception {
+    static void validateFile(File file, boolean directory, long min, long max) throws Exception {
         StructStat stat = Os.lstat(file.getPath());
         if (!file.getCanonicalPath().equals(file.getAbsolutePath()) || stat.st_uid != 2000
                 || (stat.st_mode & 0077) != 0
