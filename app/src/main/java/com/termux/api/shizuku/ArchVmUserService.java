@@ -229,8 +229,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("vm_name", "termux-arch-v2").put("running", ownerActive)
                     .put("guest_boot", ready ? "verified" : "not_verified")
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
-                    .put("root_read_only", false).put("network_enabled", true)
-                    .put("network_backend", "avf_tethering")
+                    .put("root_read_only", false).put("network_enabled", false)
+                    .put("network_backend", "none")
+                    .put("native_network_reason", "host_crosvm_rejects_net_option")
                     // A configured NIC does not prove DHCP, DNS or internet reachability.
                     .put("network_connectivity", "not_probed")
                     .put("ssh_port", bridge == null ? JSONObject.NULL : bridge.port())
