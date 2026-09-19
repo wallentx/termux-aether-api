@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="shizuku_access">Shizuku access</string>
-    <string name="shizuku_explanation">Shizuku gives this app ADB-level access. This build uses it only to read detailed thermal diagnostics. You can revoke access in Shizuku at any time.</string>
+    <string name="shizuku_explanation">Shizuku gives this app ADB-level access to read device diagnostics and manage the Arch virtual machine and its network bridge. You can revoke access in Shizuku at any time.</string>
     <string name="shizuku_request_access">Request access</string>
     <string name="shizuku_open_manager">Open Shizuku</string>
     <string name="shizuku_install_manager">Install Shizuku, start its service, then return here.</string>
