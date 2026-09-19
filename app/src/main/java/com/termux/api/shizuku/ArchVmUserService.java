@@ -117,6 +117,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 spawned.countDown();
                 while (running.isAlive()) Thread.sleep(200);
                 drain.join(1000);
+                synchronized (guard) {
+                    if (!cleanShutdown && failure == null)
+                        failure = ready ? "vm_exited_without_clean_shutdown" : "vm_exited_before_readiness";
+                }
             } catch (Exception | LinkageError error) {
                 android.util.Log.w("termux-arch-vm", "AVF owner failed", error);
                 synchronized (guard) { failure = "avf_failed: " + error.getClass().getSimpleName(); }
