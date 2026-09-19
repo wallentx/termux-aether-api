@@ -14,6 +14,7 @@ import java.util.List;
 
 /** Uses AVF's owned Binder handle: SELinux forbids raw vsock creation by shell. */
 final class ArchVmInstance {
+    static final long MEMORY_BYTES = 4L * 1024 * 1024 * 1024;
     private static final String AIDL = "android.system.virtualizationservice.";
     // Keep the platform service's bootstrap socket alive for this VM's lifetime.
     private final Object virtualizationService;
@@ -66,7 +67,10 @@ final class ArchVmInstance {
             Object builder = builderType.getConstructor(Context.class).newInstance(context);
             builderType.getMethod("setCustomImageConfig", customType).invoke(builder, image);
             builderType.getMethod("setProtectedVm", boolean.class).invoke(builder, false);
-            builderType.getMethod("setMemoryBytes", long.class).invoke(builder, 1024L * 1024 * 1024);
+            builderType.getMethod("setMemoryBytes", long.class).invoke(builder, MEMORY_BYTES);
+            int matchHost = Class.forName("android.system.virtualmachine.VirtualMachineConfig")
+                    .getField("CPU_TOPOLOGY_MATCH_HOST").getInt(null);
+            builderType.getMethod("setCpuTopology", int.class).invoke(builder, matchHost);
             builderType.getMethod("setConsoleInputDevice", String.class).invoke(builder, "hvc0");
             Object frameworkConfig = builderType.getMethod("build").invoke(builder);
             Method rawMethod = frameworkConfig.getClass().getDeclaredMethod("toVsRawConfig");

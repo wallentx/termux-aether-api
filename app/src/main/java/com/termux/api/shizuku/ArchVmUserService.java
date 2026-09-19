@@ -234,6 +234,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("guest_boot", ready ? "verified" : "not_verified")
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
                     .put("root_read_only", false).put("network_enabled", true)
+                    .put("cpu_topology", "match_host")
+                    .put("memory_mib", ArchVmInstance.MEMORY_BYTES / (1024 * 1024))
                     .put("native_network_enabled", false)
                     .put("network_backend", "vsock_userspace_ipv4")
                     .put("network_bridge_state", network == null ? "not_started" : network.state())

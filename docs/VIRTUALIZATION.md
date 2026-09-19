@@ -192,7 +192,7 @@ policy and internet reachability require Pixel testing. No PRoot speedup is clai
 
 | Default | Reason / requirement to change |
 | --- | --- |
-| 1 vCPU, 1 GiB RAM, 6 GiB disk | Conservative resource allocation; tune from real workloads. More CPUs do not accelerate serial work, and memory competes with Android. |
+| Host-matched vCPUs, 4 GiB RAM, 6 GiB disk | Exposes the host CPU topology for parallel workloads. RAM is a fixed guest ceiling; disk growth and memory ballooning are separate changes. Android still schedules VM threads alongside other apps. |
 | Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
 | Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
 | No Android directory sharing | Requires an explicit host/guest sharing mechanism and selected paths. VIRTIO_FS is not enabled in the current kernel. |
