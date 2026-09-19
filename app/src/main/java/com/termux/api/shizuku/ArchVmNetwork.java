@@ -54,8 +54,12 @@ final class ArchVmNetwork implements Closeable {
                 try (OutputStream destination = process.getOutputStream()) {
                     byte[] bytes = new byte[32768];
                     int count;
-                    while (!closed && (count = Os.read(fd.getFileDescriptor(), bytes, 0, bytes.length)) > 0)
+                    while (!closed && (count = Os.read(fd.getFileDescriptor(), bytes, 0, bytes.length)) > 0) {
                         destination.write(bytes, 0, count);
+                        // Process stdin is buffered. DHCP must not wait for a
+                        // buffer to fill before the backend sees its first frame.
+                        destination.flush();
+                    }
                 } catch (Exception failure) {
                     fail(failure);
                     close();
