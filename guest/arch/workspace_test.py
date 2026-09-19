@@ -10,6 +10,7 @@ import signal
 import struct
 import subprocess
 import termios
+import tempfile
 import time
 import traceback
 
@@ -114,6 +115,19 @@ def main():
     assert first.returncode == 0 and b'termux-avf' in first.stdout, first
     initial = status()
     assert initial['status'] == 'ready' and not initial['root_read_only']
+    result = arch('findmnt', '-n', '-o', 'OPTIONS', '/')
+    assert result.returncode == 0 and result.stdout.startswith(b'rw,'), result
+    with tempfile.TemporaryDirectory(prefix='arch-wrong-key-', dir=os.environ.get('TMPDIR')) as work:
+        key = Path(work) / 'wrong-key'
+        subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(key)], check=True)
+        known = Path.home() / '.config/termux/arch-vm/known_hosts'
+        result = run(['ssh', '-F', '/dev/null', '-i', str(key), '-p', str(initial['ssh_port']),
+                      '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none',
+                      '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}',
+                      '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'HostKeyAlias=termux-arch-v2',
+                      '-o', 'ConnectTimeout=5', 'root@127.0.0.1', 'true'])
+        assert result.returncode == 255 and b'Permission denied' in result.stderr, result
+        report['wrong_key_rejected'] = True
     result = arch('bash', '-c', 'printf out; printf err >&2; exit 37')
     assert (result.returncode, result.stdout, result.stderr) == (37, b'out', b'err'), result
     args = ['', 'two words', "single'quote", '$HOME', '$(touch /root/INJECTION)', 'line\nbreak', '*']

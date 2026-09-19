@@ -285,3 +285,31 @@ Directly executing the Python test under `adb shell` or `run-as` is not equivale
 The service remains non-exported and no external-app execution setting or broad
 permission grant is needed. This command testing route needs no keyboard input or
 screen unlock; visual UI tests still need the display.
+
+### Writable workspace acceptance - 2026-09-19
+
+Pixel API APK `26447e4`, guest `15baca1` (CI run `35412136070`), and CLI `54a0d9e`
+passed the native Termux workspace harness at UID 10445. Android's VM list named
+`termux-arch-v2` with shell requester UID 2000. The installed Android 17 framework
+uses a different device-assignment configuration type from AOSP main, so the
+adapter uses its own `VirtualMachineConfig` builder and `toVsRawConfig` conversion
+instead of manually constructing a guessed raw schema. The owned AVF Binder
+handle supplies each vsock connection; no raw host vsock socket is created.
+
+Validated: ext4 mounted writable, unrelated SSH key rejected, exact arguments
+including empty/newline/dollar values, 130000-byte binary stdin, separate stdout
+and stderr, exit 37, explicit guest working directory, missing-directory failure,
+`æ` inline execution, `Æ` login shell, PTY resize from 31x93 to 42x107 and Ctrl-C.
+All first-run commands reused CID 2054. After clean shutdown, CID 2055 retained the
+same file contents and SSH host key. Both stops confirmed the guest remounted
+root read-only and the VM stopped. The final Android list contains no owned VM.
+
+Readiness observations were 8989 ms initially and 5846 ms on restart. They are not
+PRoot comparisons. Guest networking, Android project sharing, resource tuning,
+and controlled performance benchmarking remain separate work.
+
+`guest/arch/workspace_test.py` runs these checks from the real Termux runtime.
+It writes `~/arch-workspace-test-20260919/report.json` and a PTY transcript, creates
+a test marker in `/root/termux-acceptance-20260919`, and leaves the VM stopped.
+Save work and exit active guest sessions before running it; shutdown terminates
+guest processes. Device credentials and project data are not reset or replaced.
