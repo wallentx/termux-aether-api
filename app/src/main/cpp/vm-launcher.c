@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     if (getuid() != 2000) return 3; // This backend intentionally requires shell Shizuku.
     if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != expected) return 4;
     umask(077);
-    int lock = open("/data/local/tmp/termux-arch-v2/owner.lock", O_CREAT | O_RDWR | O_NOFOLLOW, 0600);
+    int lock = open("/data/local/tmp/termux-arch-v1/owner.lock", O_CREAT | O_RDWR | O_NOFOLLOW, 0600);
     struct stat st;
     if (lock < 0 || fstat(lock, &st) || !S_ISREG(st.st_mode) || st.st_uid != 2000 ||
         st.st_nlink != 1 || (st.st_mode & 077) || flock(lock, LOCK_EX | LOCK_NB)) {
@@ -24,8 +24,8 @@ int main(int argc, char **argv) {
         return 5;
     }
     // Keep the lock open through exec. Never accept user paths, flags, or shell text.
-    execl("/apex/com.android.virt/bin/vm", "vm", "run", "--name", "termux-arch-v2",
-          "/data/local/tmp/termux-arch-v2/config.json", (char *)NULL);
+    execl("/apex/com.android.virt/bin/vm", "vm", "run", "--name", "termux-arch-v1",
+          "/data/local/tmp/termux-arch-v1/config.json", (char *)NULL);
     perror("exec AVF vm");
     return 6;
 }

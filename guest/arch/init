@@ -34,7 +34,7 @@ if $ci; then
     # QEMU CI-only connectivity. Production config has neither NIC nor this flag.
     ip link set eth0 up
     ip addr add 10.0.2.15/24 dev eth0
-    /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux -o ListenAddress=0.0.0.0 &
+    /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux -o ListenAddress=10.0.2.15 &
 else
     /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux &
     /usr/local/sbin/termux-vsock-ssh &

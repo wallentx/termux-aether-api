@@ -20,15 +20,6 @@ public class ArchVmProtocolTest {
         }
     }
 
-    @Test public void cidMustComeFromTheFixedLauncherLine() {
-        String line = "Created VM from \"/data/local/tmp/termux-arch-v2/config.json\" with CID 2054, state is STARTING.\n";
-        assertEquals(2054, ArchVmProtocol.cid(line));
-        assertEquals(0, ArchVmProtocol.cid(line.replace("v2", "v1")));
-        assertEquals(0, ArchVmProtocol.cid(line.replace("2054", "2")));
-        assertEquals(0, ArchVmProtocol.cid(line.replace("2054", "4294967295")));
-        assertEquals(0, ArchVmProtocol.cid("guest prefix " + line));
-    }
-
     @Test public void consoleKeyNeedsACompleteValidLine() {
         assertEquals(key(), ArchVmProtocol.hostKey("logs\r\nTERMUX_ARCH_HOST_KEY_V2 " + key() + "\r\nmore"));
         assertNull(ArchVmProtocol.hostKey("TERMUX_ARCH_HOST_KEY_V2 " + key().substring(0, 40)));
