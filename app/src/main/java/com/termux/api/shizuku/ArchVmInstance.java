@@ -53,7 +53,7 @@ final class ArchVmInstance {
             customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, new File(base, "Image").getPath());
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
                     "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1");
-            customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);
+            customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, true);
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
                     diskType.getMethod("RWDisk", String.class).invoke(null, new File(base, "arch-rootfs.img").getPath()));
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
@@ -69,7 +69,7 @@ final class ArchVmInstance {
             Method rawMethod = frameworkConfig.getClass().getDeclaredMethod("toVsRawConfig");
             rawMethod.setAccessible(true);
             Object raw = emptyArrays(rawMethod.invoke(frameworkConfig));
-            set(raw, "networkSupported", false);
+            set(raw, "networkSupported", true);
             files.add((ParcelFileDescriptor)raw.getClass().getField("kernel").get(raw));
             Object disks = raw.getClass().getField("disks").get(raw);
             for (int i = 0; i < Array.getLength(disks); i++) {
