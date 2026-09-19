@@ -101,8 +101,8 @@ def main():
                 network_host.stdin.close()
                 result = subprocess.run(ssh + [
                     'for i in $(seq 1 30); do test ! -e /sys/class/net/avf0 || break; sleep .1; done; '
-                    'test -e /sys/class/net/avf0 && '
-                    'nohup termux-vm-network avf0 >/run/bridge-dhcp.log 2>&1 </dev/null &'],
+                    'test -e /sys/class/net/avf0 || exit 1; '
+                    'nohup termux-vm-network avf0 >/run/bridge-dhcp.log 2>&1 </dev/null & exit 0'],
                     capture_output=True, timeout=15)
                 assert result.returncode == 0, result
                 for _ in range(30):
