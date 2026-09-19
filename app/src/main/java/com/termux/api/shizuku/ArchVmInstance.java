@@ -105,7 +105,11 @@ final class ArchVmInstance {
         return state != deadState && state != notStartedState;
     }
     ParcelFileDescriptor connect() throws Exception {
-        return (ParcelFileDescriptor)vmInterface.getMethod("connectVsock", int.class).invoke(vm, 2222);
+        return connect(2222);
+    }
+    ParcelFileDescriptor connect(int port) throws Exception {
+        if (port != 2222 && port != 2223) throw new IllegalArgumentException("Unsupported guest port");
+        return (ParcelFileDescriptor)vmInterface.getMethod("connectVsock", int.class).invoke(vm, port);
     }
     void closeConsole() {
         try { input.close(); } catch (Exception ignored) { }
