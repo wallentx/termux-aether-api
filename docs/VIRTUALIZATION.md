@@ -123,6 +123,8 @@ The complete ext4 root filesystem is writable, including `/root`, packages, and
 configuration. The kernel replays the ext4 journal after an unexpected power loss;
 this is not a substitute for backups or offline filesystem repair. Normal stop
 terminates guest processes, syncs and remounts root read-only, then powers off.
+A static shutdown helper runs as PID 1 from `/run` (tmpfs), releasing Bash,
+libraries and startup-script inodes even if a package update replaced them.
 A stop timeout leaves the guest running and reports an error. Unexpected Shizuku
 process death or Android shutdown is still a guest power loss. Stop the guest
 before replacing its APK or staged files. Staging refuses to overwrite an existing
@@ -137,7 +139,18 @@ still does not bypass its restrictions. The service holds an exclusive disk-owne
 lock before writing configuration or attaching storage. It binds a random Android loopback port and relays
 at most eight sessions to the fixed port of its owned guest. Other Android apps
 can reach that loopback listener but cannot authenticate without the private key.
-Password login, SSH forwarding and guest network adapters are disabled. The
+Password login and SSH forwarding are disabled. A virtual Ethernet adapter uses
+AVF's Android tethering service; guest `dhcpcd` acquires IPv4, routes and DNS.
+The DHCP hook writes a readable runtime resolver file without requiring systemd.
+DHCP retries asynchronously, so an offline phone can still open local SSH.
+On first boot, `pacman-key --init` and `--populate archlinuxarm` initialize package
+signing trust on the device. No generated private key is published in the image.
+The host supplies its current Unix time as a numeric boot parameter, which init
+applies before key generation and HTTPS. The original AVF guest had no working
+wall clock and created files dated 1970. This is boot-time synchronization, not
+a continuous time service across long host suspend periods.
+`network_enabled` reports adapter configuration, not internet reachability;
+`network_connectivity` remains `not_probed` until independently tested. The
 initial shell is guest root; it does not grant Android root or expose host paths.
 The bridge uses the standard SSH protocol for PTY resize, interrupts, binary I/O,
 separate stdout/stderr and exit codes. No guest command is executed by Android's
@@ -152,10 +165,60 @@ fails before command execution. `Æ` opens a login shell in guest home. Exiting 
 shell keeps the VM alive; `termux-arch-vm --stop` shuts it down. Failed commands are
 never automatically retried, since they may have changed files already.
 
-CI validates the root image under QEMU with a CI-only virtual NIC, checks SSH,
+CI validates the root image under QEMU with a virtual NIC, checks SSH,
 PTY allocation, binary stdin, separate output/exit code and persistence across
-a clean reboot. The production config has no NIC or CI flag; actual vsock access
-and Android SELinux behavior require Pixel testing. No PRoot speedup is claimed.
+a clean reboot. It also exercises Landlock enforcement and a sandboxed Pacman
+download against a local test repository. Only the CI flag exposes SSH on
+Ethernet (port 2222); production SSH remains loopback-only. Actual vsock access,
+Android tethering and internet reachability require Pixel testing. No PRoot
+speedup is claimed.
+
+### Guest defaults and their costs
+
+| Default | Reason / requirement to change |
+| --- | --- |
+| 1 vCPU, 1 GiB RAM, 6 GiB disk | Conservative resource allocation; tune from real workloads. More CPUs do not accelerate serial work, and memory competes with Android. |
+| Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
+| IPv4 DHCP via AVF tethering | No direct Wi-Fi hardware access required. IPv6 integration is not configured. A lease does not establish internet reachability. |
+| No Android directory sharing | Requires an explicit host/guest sharing mechanism and selected paths. VIRTIO_FS is not enabled in the current kernel. |
+| DRM, audio, WLAN, Bluetooth, modules disabled | Smaller fixed kernel; enabling guest drivers alone cannot provide host virtual devices or passthrough. Modules need matching installed files on each kernel upgrade. |
+| Minimal Bash PID 1 | Fast shell workspace; normal systemd service management is unavailable. |
+| Password SSH, forwarding, tunnels disabled | Only the device's generated key opens guest sessions. No new guest-to-host forwarding capability. |
+| Non-protected VM | Custom Arch uses host-managed storage and communication. Protected execution and nested virtualization have not been validated. |
+
+SVE, seccomp, namespaces, cgroups, overlayfs and FUSE are compiled in. Guest CPU
+exposure and actual SIMD dispatch must be checked independently; a kernel flag
+does not prove acceleration. There is no automatic VM start or restart.
+
+### Updating an existing guest without replacing its disk
+
+The CI artifact includes `guest-update.tar` alongside `Image` and SHA256SUMS.
+Verify checksums first. Keep a backup and save work before stopping the VM.
+
+1. Extract the update payload into a temporary guest directory over authenticated
+   SSH. **Rename** the existing `/usr/local/sbin/termux-vm-init` into a unique
+   backup directory on the same filesystem before installing the new script.
+   Do not merely copy it and overwrite/unlink the original: Bash PID 1 retains
+   the old inode, and an open unlinked inode can prevent ext4 remount-read-only.
+   Retain that backup until after a successful shutdown.
+2. Install `termux-vm-network` and `termux-vm-shutdown` under `/usr/local/sbin`,
+   `termux-landlock-check` under `/usr/local/bin`, and `termux-dhcp-hook` under
+   `/usr/local/libexec`, all mode 0755. For the original image's dangling
+   `/etc/resolv.conf -> /run/systemd/resolve/resolv.conf` link, preserve a backup
+   and replace it with `/run/termux-network/resolv.conf`. Preserve custom DNS
+   configuration instead of overwriting it blindly.
+3. Run `termux-arch-vm --stop` and verify `running=false` and
+   `clean_shutdown=true`. Only then replace the host-side kernel with the
+   verified `Image`, retaining the old kernel. Install any API APK update while
+   stopped. Never replace `arch-rootfs.img` or reset SSH keys.
+4. Start the VM and run `guest/arch/network_test.py` from native Termux. It checks
+   real Landlock enforcement, address/DNS, HTTPS, sandboxed repository download
+   and SSH binding. Its temporary Pacman DB does not update installed packages
+   or the production package database. It leaves the VM running.
+
+If a stop fails, do not replace the APK or disk. The service deliberately leaves
+the VM alive. Recovery that powers off a still-writable guest requires explicit
+approval and an offline disk backup/check before further use.
 
 
 ## Historical read-only boot milestone (v1)
