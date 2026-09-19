@@ -457,3 +457,21 @@ It writes `~/arch-workspace-test-20260919/report.json` and a PTY transcript, cre
 a test marker in `/root/termux-acceptance-20260919`, and leaves the VM stopped.
 Save work and exit active guest sessions before running it; shutdown terminates
 guest processes. Device credentials and project data are not reset or replaced.
+
+### Resource resizing without a new APK
+
+`termux-arch-vm --grow-disk 16G` increases the existing sparse image capacity,
+boots it, grows ext4, and cleanly shuts down after the resize session. Existing
+files and SSH identity are preserved. The VM must already be stopped because
+AVF must reopen the block image at its new size. Shrinking is rejected. Sparse
+capacity consumes Android storage as guest blocks are written; it does not reserve
+all 16 GiB immediately. The host can still run out of real storage. If ext4 growth
+is interrupted, retry the same size; do not replace the image.
+
+`termux-arch-vm --memory-live 6G` requests a balloon target on a running guest
+whose launch ceiling is at least 6 GiB. `--memory-live 8G` restores an 8 GiB guest's
+full ceiling. Status exposes `memory_balloon_enabled` and `memory_balloon_bytes`;
+requests fail explicitly if this host disables balloon control. Reclamation is
+asynchronous and not proof of exact resident memory. This is manual live sizing;
+automatic pressure-based resizing is not enabled. Avoid shrinking below the active
+workload's needs. Suspend/shutdown still follow the session policy.
