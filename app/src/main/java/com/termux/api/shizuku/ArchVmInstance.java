@@ -52,7 +52,8 @@ final class ArchVmInstance {
             customBuilderType.getMethod("setName", String.class).invoke(custom, "termux-arch-v2");
             customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, new File(base, "Image").getPath());
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
-                    "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1");
+                    "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
+                            + (System.currentTimeMillis() / 1000));
             customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, true);
             customBuilderType.getMethod("addDisk", diskType).invoke(custom,
                     diskType.getMethod("RWDisk", String.class).invoke(null, new File(base, "arch-rootfs.img").getPath()));
