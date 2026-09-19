@@ -114,7 +114,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 lock = lockFile.getChannel().tryLock();
                 if (lock == null) throw new IllegalStateException("Guest is already owned");
                 validateFile(new File(BASE, "Image"), false, 4096, 256L * 1024 * 1024);
-                validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, 8L * 1024 * 1024 * 1024);
+                validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, Long.MAX_VALUE);
                 File seed = new File(BASE, "authorized-key.bin");
                 if (seed.exists()) validateFile(seed, false, 4096, 4096);
                 if (publicKey == null && seed.exists()) {
@@ -275,6 +275,43 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         suspended = false;
     }
 
+    @Override public String resizeMemory(int retainedMiB) {
+        authorize();
+        synchronized (guard) {
+            if (!ownerActive || !ready || stopping || suspended) return memoryError("live_memory_requires_running_guest");
+            if (retainedMiB <= 0 || retainedMiB > memoryMiB) return memoryError("live_memory_exceeds_launch_ceiling");
+            try {
+                if (!child.balloonEnabled()) return memoryError("memory_balloon_unavailable");
+                child.balloon((memoryMiB - (long)retainedMiB) * 1024 * 1024);
+                return new JSONObject(report()).put("requested_usable_memory_mib", retainedMiB).toString();
+            } catch (Exception error) { return memoryError("memory_balloon_failed: " + error.getClass().getSimpleName()); }
+        }
+    }
+
+    @Override public String growDisk(long bytes) {
+        authorize();
+        synchronized (guard) {
+            if (ownerActive) return memoryError("disk_growth_requires_stopped_guest");
+            File image = new File(BASE, "arch-rootfs.img");
+            try {
+                validateFile(BASE, true, 0, 0);
+                validateFile(image, false, 1024 * 1024, Long.MAX_VALUE);
+                if (bytes < image.length() || bytes % (1024 * 1024) != 0)
+                    return memoryError("disk_size_must_grow_in_whole_mib");
+                File owner = new File(BASE, "owner.lock");
+                if (owner.exists()) validateFile(owner, false, 0, 0);
+                try (RandomAccessFile handle = new RandomAccessFile(owner, "rw")) {
+                    Os.chmod(owner.getPath(), 0600);
+                    try (FileLock exclusive = handle.getChannel().tryLock()) {
+                        if (exclusive == null) return memoryError("guest_is_owned_elsewhere");
+                        ArchVmDisk.grow(image, bytes);
+                    }
+                }
+                return new JSONObject(report()).put("filesystem_growth_required", true).toString();
+            } catch (Exception error) { return memoryError("disk_growth_failed: " + error.getClass().getSimpleName()); }
+        }
+    }
+
     @Override public String status() { authorize(); synchronized (guard) { return report(); } }
     @Override public String stop() { authorize(); return stopOwned(); }
 
@@ -347,7 +384,15 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 nextMemory = JSONObject.NULL;
                 memoryPreferenceError = "Invalid saved RAM preference: " + invalid.getClass().getSimpleName();
             }
-            return new JSONObject().put("status", failure != null ? "error" : starting ? "starting"
+            Object balloonEnabled = JSONObject.NULL, balloonBytes = JSONObject.NULL;
+            if (child != null && ownerActive && !starting) try {
+                balloonEnabled = child.balloonEnabled();
+                if (Boolean.TRUE.equals(balloonEnabled)) balloonBytes = child.balloonBytes();
+            } catch (Exception ignored) { }
+            File disk = new File(BASE, "arch-rootfs.img");
+            return new JSONObject().put("memory_balloon_enabled", balloonEnabled)
+                    .put("memory_balloon_bytes", balloonBytes).put("disk_capacity_bytes", disk.length())
+                    .put("status", failure != null ? "error" : starting ? "starting"
                             : ownerActive ? stopping ? "stopping" : suspended ? "suspended" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())
                     .put("vm_name", "termux-arch-v2").put("running", ownerActive)

@@ -106,6 +106,15 @@ final class ArchVmInstance {
     }
     void suspend() throws Exception { vmInterface.getMethod("suspend").invoke(vm); }
     void resume() throws Exception { vmInterface.getMethod("resume").invoke(vm); }
+    boolean balloonEnabled() throws Exception {
+        return (Boolean)vmInterface.getMethod("isMemoryBalloonEnabled").invoke(vm);
+    }
+    long balloonBytes() throws Exception {
+        return (Long)vmInterface.getMethod("getActualMemoryBalloonBytes").invoke(vm);
+    }
+    void balloon(long bytes) throws Exception {
+        vmInterface.getMethod("setMemoryBalloon", long.class).invoke(vm, bytes);
+    }
     int cid() throws Exception { return (Integer)vmInterface.getMethod("getCid").invoke(vm); }
     boolean isAlive() throws Exception {
         IBinder binder = (IBinder)vmInterface.getMethod("asBinder").invoke(vm);

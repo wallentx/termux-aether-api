@@ -19,18 +19,27 @@ import rikka.shizuku.Shizuku;
 public final class ArchVmAPI {
     private ArchVmAPI() {}
 
-    public static JSONObject call(Context context, String operation, String publicKey, String memory, String token, boolean keepMemory) throws org.json.JSONException {
+    public static JSONObject call(Context context, String operation, String publicKey, String memory, String token, boolean keepMemory, String diskBytes) throws org.json.JSONException {
         if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")
                 && !operation.equals("arch-session-acquire") && !operation.equals("arch-session-renew")
-                && !operation.equals("arch-session-release")) {
+                && !operation.equals("arch-session-release") && !operation.equals("arch-memory-live")
+                && !operation.equals("arch-disk-grow")) {
             return new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
         }
         final int memoryMiB;
         try {
             memoryMiB = ArchVmMemory.parseRequest(memory);
-            if (memory != null && !operation.equals("arch-start")) throw new IllegalArgumentException();
+            if (memory != null && !operation.equals("arch-start") && !operation.equals("arch-memory-live")) throw new IllegalArgumentException();
         } catch (IllegalArgumentException invalid) {
             return new JSONObject().put("status", "error").put("reason", "invalid_memory_mib");
+        }
+        final long diskSize;
+        try {
+            diskSize = diskBytes == null ? 0 : Long.parseLong(diskBytes);
+            if (operation.equals("arch-disk-grow") && diskSize <= 0) throw new IllegalArgumentException();
+            if (diskBytes != null && !operation.equals("arch-disk-grow")) throw new IllegalArgumentException();
+        } catch (IllegalArgumentException invalid) {
+            return new JSONObject().put("status", "error").put("reason", "invalid_disk_bytes");
         }
         JSONObject access = ShizukuAPI.status(context);
         if (!"ok".equals(access.optString("status"))) return access;
@@ -59,6 +68,8 @@ public final class ArchVmAPI {
                 switch (operation) {
                     case "arch-start": return memoryMiB == 0 ? service.start(publicKey)
                             : service.startWithMemory(publicKey, memoryMiB);
+                    case "arch-memory-live": return service.resizeMemory(memoryMiB);
+                    case "arch-disk-grow": return service.growDisk(diskSize);
                     case "arch-stop": return service.stop();
                     case "arch-session-acquire": return service.session("acquire", token, keepMemory);
                     case "arch-session-renew": return service.session("renew", token, false);
