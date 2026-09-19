@@ -176,7 +176,23 @@ args...` selects an explicit guest working directory. Commands launched from
 Termux home default to guest `/root`; commands from other host directories require
 `--cwd` because project sharing is not implemented. A nonexistent guest directory
 fails before command execution. `Æ` opens a login shell in guest home. Exiting a
-shell keeps the VM alive; `termux-arch-vm --stop` shuts it down. Failed commands are
+shell releases its session lease. The last session exits by cleanly shutting down
+Arch and releasing its RAM by default. `Æ --keep-memory` or
+`æ --keep-memory command args...` instead suspends the guest after the last session,
+preserving its RAM and processes for the next invocation. Background guest jobs
+stop with default shutdown; they freeze during suspension. The next ordinary
+invocation resumes and returns to default shutdown on exit. Overlapping sessions
+keep the guest running until all exit; any `--keep-memory` in that busy period
+selects suspension. `termux-arch --start` explicitly starts a manually managed VM;
+`termux-arch-vm --stop` always requests a clean shutdown. A later managed `Æ`/`æ`
+session takes over idle cleanup.
+
+Leases renew every 15 seconds and expire after 60 seconds if a launcher dies;
+live SSH connections also prevent idle cleanup. Shutdown/suspend failures are
+reported, never converted to forced shutdown. Status includes `active_sessions`,
+`ssh_connections`, `idle_policy`, `suspended` and `idle_error`. Suspension pauses
+the host network helper too; existing remote TCP connections can time out while
+paused and applications may need to reconnect. Failed commands are
 never automatically retried, since they may have changed files already.
 
 RAM is a launch setting, independent of the APK and guest disk:

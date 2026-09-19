@@ -26,6 +26,8 @@ final class ArchVmBridge implements Closeable {
         daemon(() -> accept(vm), "arch-ssh-listener");
     }
 
+    synchronized int connections() { return clients.size(); }
+
     int port() { return listener.getLocalPort(); }
 
     private void accept(ArchVmInstance vm) {

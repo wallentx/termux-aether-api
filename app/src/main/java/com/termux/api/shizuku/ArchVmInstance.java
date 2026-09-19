@@ -100,6 +100,12 @@ final class ArchVmInstance {
     }
 
     void start() throws Exception { vmInterface.getMethod("start").invoke(vm); }
+    boolean supportsSuspend() {
+        try { vmInterface.getMethod("suspend"); vmInterface.getMethod("resume"); return true; }
+        catch (NoSuchMethodException absent) { return false; }
+    }
+    void suspend() throws Exception { vmInterface.getMethod("suspend").invoke(vm); }
+    void resume() throws Exception { vmInterface.getMethod("resume").invoke(vm); }
     int cid() throws Exception { return (Integer)vmInterface.getMethod("getCid").invoke(vm); }
     boolean isAlive() throws Exception {
         IBinder binder = (IBinder)vmInterface.getMethod("asBinder").invoke(vm);
