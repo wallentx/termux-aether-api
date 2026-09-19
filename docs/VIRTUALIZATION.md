@@ -238,6 +238,27 @@ If a stop fails, do not replace the APK or disk. The service deliberately leaves
 the VM alive. Recovery that powers off a still-writable guest requires explicit
 approval and an offline disk backup/check before further use.
 
+### Pixel validation: September 19, 2026
+
+Guest CI run `35418699483` passed TAP DHCP/DNS, TCP/UDP, Landlock enforcement,
+sandboxed Pacman downloads, SSH persistence and clean shutdown. API CI run
+`35419089131` built commit `6e622cb`. The Pixel 11 Pro XL then passed the real
+AVF/vsock path: `avf0` received 192.168.127.2/24, DNS and HTTPS worked, and Pacman
+synchronized repositories into a temporary database with its production sandbox
+settings. Separate TCP and UDP echo tests reached a LAN fixture on the development
+phone. The guest clock differed from Android by 2.1 seconds; Landlock ABI 7
+allowed the permitted write and denied the forbidden write.
+
+A clean stop removed the network helper. Restart acquired networking again,
+returned HTTPS 200, and preserved the saved marker and SSH identity. SSH readiness
+after that restart was 1618 ms; this is not an internet-readiness measurement or
+a PRoot comparison. An initial Pixel test exposed buffered Android process stdin
+stalling small DHCP packets even though the direct-pipe CI test passed. Explicit
+flushing in the Android transport fixed the issue and the device tests were repeated.
+Detailed results are in `~/reports/termux-app/pixel11-arch-network-20260919.json`
+on the development phone. Re-run `guest/arch/network_test.py` from native Pixel
+Termux to validate the installed guest without upgrading packages.
+
 
 ## Historical read-only boot milestone (v1)
 
