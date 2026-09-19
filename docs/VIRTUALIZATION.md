@@ -108,7 +108,52 @@ image/config paths under app control and exposing no arbitrary shell command.
 Help output is not proof that an Arch guest boots. No VM was created or changed
 during this probe, and neither VM permission was granted.
 
-## Experimental Shizuku Arch boot
+## Writable Arch workspace (v2)
+
+The current launcher uses `/data/local/tmp/termux-arch-v2`, separately from the
+read-only v1 boot proof below. Stage the new guest artifact with `stage.py`, install
+Python and OpenSSH in Termux, and run `termux-arch --shell` (or `Æ`). The first
+launch creates a device-local Ed25519 client key in `~/.config/termux/arch-vm`.
+Only its public key crosses the API. The guest creates its own host key on first
+boot; the CLI pins the public key obtained through the owned VM's console and
+refuses subsequent identity changes. CI tests use a disposable disk copy, so the
+published image contains neither test keys nor test files.
+
+The complete ext4 root filesystem is writable, including `/root`, packages, and
+configuration. The kernel replays the ext4 journal after an unexpected power loss;
+this is not a substitute for backups or offline filesystem repair. Normal stop
+terminates guest processes, syncs and remounts root read-only, then powers off.
+A stop timeout leaves the guest running and reports an error. Unexpected Shizuku
+process death or Android shutdown is still a guest power loss. Stop the guest
+before replacing its APK or staged files. Staging refuses to overwrite an existing
+v2 installation; image upgrades must preserve its data explicitly.
+
+SSH runs only on guest loopback. A guest relay accepts only host-CID vsock traffic
+on port 2222. The Shizuku service binds a random Android loopback port and relays
+at most eight sessions to the fixed port of its owned guest. Other Android apps
+can reach that loopback listener but cannot authenticate without the private key.
+Password login, SSH forwarding and guest network adapters are disabled. The
+initial shell is guest root; it does not grant Android root or expose host paths.
+The bridge uses the standard SSH protocol for PTY resize, interrupts, binary I/O,
+separate stdout/stderr and exit codes. No guest command is executed by Android's
+shell. The API continues to accept only fixed lifecycle operations and an
+Ed25519 public key, never arbitrary host paths or commands.
+
+`æ command args...` executes an argument vector. `termux-arch --cwd /root -- command
+args...` selects an explicit guest working directory. Commands launched from
+Termux home default to guest `/root`; commands from other host directories require
+`--cwd` because project sharing is not implemented. A nonexistent guest directory
+fails before command execution. `Æ` opens a login shell in guest home. Exiting a
+shell keeps the VM alive; `termux-arch-vm --stop` shuts it down. Failed commands are
+never automatically retried, since they may have changed files already.
+
+CI validates the root image under QEMU with a CI-only virtual NIC, checks SSH,
+PTY allocation, binary stdin, separate output/exit code and persistence across
+a clean reboot. The production config has no NIC or CI flag; actual vsock access
+and Android SELinux behavior require Pixel testing. No PRoot speedup is claimed.
+
+
+## Historical read-only boot milestone (v1)
 
 `termux-arch-vm --start`, `--status` (default), and `--stop` operate only the fixed
 `termux-arch-v1` guest. `termux-virtualization --status` remains the app-UID preflight.

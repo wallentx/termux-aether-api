@@ -18,7 +18,7 @@ import rikka.shizuku.Shizuku;
 public final class ArchVmAPI {
     private ArchVmAPI() {}
 
-    public static JSONObject call(Context context, String operation) throws org.json.JSONException {
+    public static JSONObject call(Context context, String operation, String publicKey) throws org.json.JSONException {
         if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")) {
             return new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
         }
@@ -35,7 +35,7 @@ public final class ArchVmAPI {
             }
         };
         Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(new ComponentName(context, ArchVmUserService.class))
-                .tag("termux-arch-v1").daemon(true).processNameSuffix("termux_arch_vm")
+                .tag("termux-arch-v2").daemon(true).processNameSuffix("termux_arch_vm")
                 .version(BuildConfig.VERSION_NAME.hashCode() & Integer.MAX_VALUE);
         ExecutorService worker = Executors.newSingleThreadExecutor(task -> {
             Thread thread = new Thread(task, "arch-vm-binder");
@@ -47,11 +47,11 @@ public final class ArchVmAPI {
             IArchVmService service = IArchVmService.Stub.asInterface(connected.get(3, TimeUnit.SECONDS));
             String json = worker.submit(() -> {
                 switch (operation) {
-                    case "arch-start": return service.start();
+                    case "arch-start": return service.start(publicKey);
                     case "arch-stop": return service.stop();
                     default: return service.status();
                 }
-            }).get(8, TimeUnit.SECONDS);
+            }).get(16, TimeUnit.SECONDS);
             return new JSONObject(json);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
@@ -61,8 +61,8 @@ public final class ArchVmAPI {
             return new JSONObject().put("status", "unavailable").put("reason", error.getClass().getSimpleName());
         } finally {
             worker.shutdownNow();
-            // Detach each command; the explicit stop command also removes the daemon.
-            try { Shizuku.unbindUserService(args, connection, "arch-stop".equals(operation)); }
+            // Detach only. Never remove a service whose writable guest may still be shutting down.
+            try { Shizuku.unbindUserService(args, connection, false); }
             catch (RuntimeException ignored) { }
         }
     }

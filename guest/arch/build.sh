@@ -39,28 +39,22 @@ sha256sum arch.tar.gz > "$out/rootfs-source.sha256"
 printf 'source=%s\nkernel=%s\ncommit=%s\n' "$arch_url" "$kernel_version" "$GITHUB_SHA" > "$out/provenance.txt"
 sudo bsdtar -xpf arch.tar.gz -C root
 sudo install -m 755 "$source_dir/init" root/usr/local/sbin/termux-vm-init
-# Lock the upstream default passwords. No guest network/login is enabled for this milestone.
-sudo sed -i -E 's/^(root|alarm):[^:]*:/\1:!:/' root/etc/shadow
+# No reusable keys or default passwords in published images. Root's impossible
+# hash keeps the account usable for public-key SSH with UsePAM=no.
+sudo sed -i -E 's/^root:[^:]*:/root:*:/; s/^alarm:[^:]*:/alarm:!:/' root/etc/shadow
+sudo rm -f root/etc/ssh/ssh_host_* root/root/.ssh/authorized_keys
+sudo test -x root/usr/bin/sshd
+sudo test -x root/usr/bin/ip
+sudo install -m 600 "$source_dir/sshd_config" root/etc/ssh/sshd_config.termux
+aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/vsock-ssh.c" -o vsock-ssh
+sudo install -m 755 vsock-ssh root/usr/local/sbin/termux-vsock-ssh
 sudo mkdir -p root/dev root/proc root/sys root/run root/tmp
 sudo test -c root/dev/console || sudo mknod -m 600 root/dev/console c 5 1
 truncate -s 6G "$out/arch-rootfs.img"
 sudo mkfs.ext4 -q -F -L termux-arch -d root "$out/arch-rootfs.img"
 sudo chown "$(id -u):$(id -g)" "$out/arch-rootfs.img"
-# QEMU is CI boot validation only; the Pixel launcher exclusively uses Android AVF.
-set +e
-(sleep 25; printf 'poweroff\n') | timeout 90 qemu-system-aarch64 \
-    -machine virt -cpu max -m 1024 -nodefaults -no-reboot \
-    -kernel "$out/Image" -append 'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1' \
-    -drive "file=$out/arch-rootfs.img,format=raw,if=none,id=root,readonly=on" \
-    -device virtio-blk-device,drive=root -device virtio-serial-device \
-    -chardev stdio,id=console,signal=off -device virtconsole,chardev=console \
-    -display none > "$out/ci-console.txt" 2>&1
-boot_exit=${PIPESTATUS[1]}
-set -e
-cat "$out/ci-console.txt"
-[[ $boot_exit == 0 ]]
-grep -q '^TERMUX_ARCH_READY_V1' "$out/ci-console.txt"
-grep -q '^TERMUX_ARCH_STOPPING_V1' "$out/ci-console.txt"
+# Test a disposable copy so CI host keys and test files never ship to devices.
+python3 "$source_dir/boot_test.py" "$out" "$work"
 zstd -T0 -3 --rm "$out/arch-rootfs.img"
 cd "$out"
 sha256sum Image arch-rootfs.img.zst kernel.config provenance.txt rootfs-source.sha256 ci-console.txt > SHA256SUMS

@@ -17,13 +17,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
-/** One fixed, read-only Arch VM. No arbitrary host commands or image paths. */
+/** One fixed, writable Arch VM with an authenticated SSH channel. No arbitrary host commands or image paths. */
 @Keep
 public final class ArchVmUserService extends IArchVmService.Stub {
-    private static final File BASE = new File("/data/local/tmp/termux-arch-v1");
-    private static final String READY = "TERMUX_ARCH_READY_V1";
+    private static final File BASE = new File("/data/local/tmp/termux-arch-v2");
+    private static final String READY = "TERMUX_ARCH_READY_V2";
     private final int ownerUid;
     private final String launcher;
+    private final String vsockLibrary;
+    private ArchVmBridge bridge;
+    private int cid;
+    private String hostKey;
+    private String authorizedKey;
+    private boolean stopping;
     private final Object guard = new Object();
     private final StringBuilder output = new StringBuilder();
     private java.lang.Process child;
@@ -39,6 +45,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Keep public ArchVmUserService(Context context) {
         ownerUid = context.getApplicationInfo().uid;
         launcher = context.getApplicationInfo().nativeLibraryDir + "/libtermux-vm-launcher.so";
+        vsockLibrary = context.getApplicationInfo().nativeLibraryDir + "/libtermux-arch-vsock.so";
     }
 
     private void authorize() {
@@ -49,29 +56,51 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Override public void destroy() {
         int caller = Binder.getCallingUid();
         if (caller != ownerUid && caller != Process.myUid() && caller != 0) throw new SecurityException("Wrong UID");
-        synchronized (guard) { if (child != null) child.destroyForcibly(); }
-        System.exit(0); // Native PDEATHSIG also covers an unexpected service death.
+        stopOwned();
+        synchronized (guard) {
+            // Refuse a normal service removal while a writable guest is still alive.
+            if (ownerActive) return;
+            if (bridge != null) bridge.close();
+        }
+        System.exit(0); // Unexpected owner death is still a guest power loss.
     }
 
-    @Override public String start() {
+    @Override public String start(String publicKey) {
         authorize();
         CountDownLatch spawned = new CountDownLatch(1);
         final CountDownLatch finished = new CountDownLatch(1);
         synchronized (guard) {
-            if (ownerActive) return report();
+            if (ownerActive) {
+                if (publicKey != null && !publicKey.equals(authorizedKey))
+                    return "{\"status\":\"error\",\"reason\":\"key_change_requires_stop\"}";
+                return report();
+            }
             try {
                 validateFile(BASE, true, 0, 0);
+                File seed = new File(BASE, "authorized-key.bin");
+                if (seed.exists()) validateFile(seed, false, 4096, 4096);
+                if (publicKey == null && seed.exists()) {
+                    publicKey = new String(java.nio.file.Files.readAllBytes(seed.toPath()),
+                            StandardCharsets.US_ASCII).replace("\0", "").trim();
+                }
+                authorizedKey = ArchVmProtocol.publicKey(publicKey);
+                byte[] seedBytes = new byte[4096];
+                byte[] keyBytes = (authorizedKey + "\n").getBytes(StandardCharsets.US_ASCII);
+                System.arraycopy(keyBytes, 0, seedBytes, 0, keyBytes.length);
+                try (FileOutputStream stream = new FileOutputStream(seed)) { stream.write(seedBytes); }
+                Os.chmod(seed.getPath(), 0600);
                 validateFile(new File(BASE, "Image"), false, 4096, 256L * 1024 * 1024);
                 validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, 8L * 1024 * 1024 * 1024);
                 File config = new File(BASE, "config.json");
                 if (config.exists()) validateFile(config, false, 0, 16384);
-                JSONObject value = new JSONObject().put("name", "termux-arch-v1")
+                JSONObject value = new JSONObject().put("name", "termux-arch-v2")
                         .put("kernel", new File(BASE, "Image").getPath())
                         .put("params", "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1")
                         .put("protected", false).put("memory_mib", 1024).put("cpu_topology", "one_cpu")
                         .put("platform_version", "~1.0").put("console_input_device", "hvc0")
                         .put("disks", new JSONArray().put(new JSONObject()
-                                .put("image", new File(BASE, "arch-rootfs.img").getPath()).put("writable", false)));
+                                .put("image", new File(BASE, "arch-rootfs.img").getPath()).put("writable", true))
+                                .put(new JSONObject().put("image", seed.getPath()).put("writable", false)));
                 try (FileOutputStream stream = new FileOutputStream(config)) {
                     stream.write(value.toString().getBytes(StandardCharsets.UTF_8));
                 }
@@ -80,6 +109,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 ownerActive = true;
                 ownerFinished = finished;
                 ready = false;
+                stopping = false;
+                cid = 0;
+                hostKey = null;
+                if (bridge != null) bridge.close();
+                bridge = null;
                 exitCode = null;
                 failure = null;
                 readyAfterMs = null;
@@ -110,7 +144,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 synchronized (guard) { failure = "launcher_failed: " + error.getClass().getSimpleName(); }
             } finally {
                 if (running != null && running.isAlive()) running.destroyForcibly();
-                synchronized (guard) { starting = false; ownerActive = false; }
+                synchronized (guard) {
+                    starting = false; ownerActive = false; stopping = false;
+                    if (bridge != null) bridge.close();
+                    bridge = null;
+                }
                 finished.countDown();
                 spawned.countDown();
             }
@@ -129,15 +167,21 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             while ((count = stream.read(bytes)) != -1) {
                 synchronized (guard) {
                     output.append(new String(bytes, 0, count, StandardCharsets.UTF_8));
-                    if (!ready && output.indexOf(READY) >= 0) {
+                    if (cid == 0) cid = ArchVmProtocol.cid(output.toString());
+                    if (hostKey == null) hostKey = ArchVmProtocol.hostKey(output.toString());
+                    if (bridge == null && cid > 0 && hostKey != null && output.indexOf(READY) >= 0) {
+                        bridge = new ArchVmBridge(vsockLibrary, cid);
+                    }
+                    if (!ready && bridge != null && output.indexOf(READY) >= 0) {
                         ready = true;
                         readyAfterMs = SystemClock.elapsedRealtime() - startedAt;
                     }
                     if (output.length() > 32768) output.delete(0, output.length() - 32768);
                 }
             }
-        } catch (Exception error) {
-            synchronized (guard) { failure = "console_read_failed"; }
+        } catch (Exception | LinkageError error) {
+            android.util.Log.w("termux-arch-vm", "Guest console/bridge failed", error);
+            synchronized (guard) { failure = "console_or_bridge_failed: " + error.getClass().getSimpleName(); }
         }
     }
 
@@ -148,24 +192,27 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     @Override public String stop() {
         authorize();
+        return stopOwned();
+    }
+
+    private String stopOwned() {
         java.lang.Process running;
         CountDownLatch finished;
         synchronized (guard) {
             if (starting) return "{\"status\":\"busy\",\"reason\":\"start_in_progress\"}";
             running = child;
             finished = ownerFinished;
+            stopping = running != null && running.isAlive();
         }
         if (running != null && running.isAlive()) {
             try {
                 running.getOutputStream().write("poweroff\n".getBytes(StandardCharsets.US_ASCII));
                 running.getOutputStream().flush();
-                if (!running.waitFor(3, TimeUnit.SECONDS)) {
-                    // This initial disk is read-only at both VM and guest layers.
-                    running.destroyForcibly();
-                    running.waitFor(2, TimeUnit.SECONDS);
+                if (!running.waitFor(12, TimeUnit.SECONDS)) {
+                    synchronized (guard) { failure = "shutdown_timeout_guest_left_running"; }
                 }
             } catch (Exception error) {
-                running.destroyForcibly();
+                synchronized (guard) { failure = "shutdown_failed_guest_left_running"; }
             }
         }
         // The owner also drains the final console bytes before publishing exitCode.
@@ -178,12 +225,15 @@ public final class ArchVmUserService extends IArchVmService.Stub {
         try {
             boolean alive = child != null && child.isAlive();
             return new JSONObject().put("status", failure != null ? "error" : starting ? "starting"
-                            : alive ? ready ? "ready" : "booting" : "stopped")
+                            : alive ? stopping ? "stopping" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())
-                    .put("vm_name", "termux-arch-v1").put("running", alive)
+                    .put("vm_name", "termux-arch-v2").put("running", alive)
                     .put("guest_boot", ready ? "verified" : "not_verified")
                     .put("ready_after_ms", readyAfterMs == null ? JSONObject.NULL : readyAfterMs)
-                    .put("root_read_only", true).put("network_enabled", false)
+                    .put("root_read_only", false).put("network_enabled", false)
+                    .put("ssh_port", bridge == null ? JSONObject.NULL : bridge.port())
+                    .put("ssh_host_key", hostKey == null ? JSONObject.NULL : hostKey)
+                    .put("cid", cid == 0 ? JSONObject.NULL : cid)
                     .put("exit_code", exitCode == null ? JSONObject.NULL : exitCode)
                     .put("reason", failure == null ? JSONObject.NULL : failure)
                     .put("console_tail", output.toString()).toString();
