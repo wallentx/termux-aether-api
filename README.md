@@ -1,6 +1,6 @@
 # Termux-Æther:API
 
-[![Build](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml/badge.svg?branch=wallentx%2Fcapabilities)](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Awallentx%2Fcapabilities)
+[![Build](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml/badge.svg?branch=dev)](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev)
 
 The Android companion for [Termux-Æther](https://github.com/wallentx/termux-aether).
 It extends [Termux:API](https://github.com/termux/termux-api) with device capability
@@ -43,7 +43,7 @@ The terminal's native Aether/glibc runtime does not need this companion.
 ## Setup
 
 1. Install [Termux-Æther](https://github.com/wallentx/termux-aether), then the APK
-   from a successful [API Build run](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Awallentx%2Fcapabilities+event%3Apush).
+   from a successful [API Build run](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev+event%3Apush).
    Use matching signing certificates. These builds retain `com.termux.api` and
    the shared Termux identity, using the public debug test key.
 2. Install the matching [CLI wrappers](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities).
