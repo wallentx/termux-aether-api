@@ -73,8 +73,8 @@ try:
     assert repeated["status"] == "ready" and repeated["ready_after_ms"] == first["ready_after_ms"]
     stopped = invoke("stop")
     assert stopped["running"] is False, stopped
-    assert "TERMUX_ARCH_STOPPING_V1" in stopped["console_tail"], stopped
-    assert stopped["exit_code"] == 0, stopped
+    assert "TERMUX_ARCH_STOPPING_V2" in stopped["console_tail"], stopped
+    assert stopped["clean_shutdown"] is True, stopped
     save("restarting")
     invoke("start")
     ready()
@@ -90,7 +90,8 @@ try:
     invoke("start")
     ready()
     stopped = invoke("stop")
-    assert stopped["running"] is False and stopped["exit_code"] == 0, stopped
+    assert stopped["running"] is False and stopped["clean_shutdown"] is True, stopped
+    assert "TERMUX_ARCH_STOPPING_V2" in stopped["console_tail"], stopped
     save("passed")
 except Exception as error:
     report["error"] = str(error)

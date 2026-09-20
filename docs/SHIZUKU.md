@@ -1,8 +1,11 @@
-# Shizuku access and thermal diagnostics
+# Shizuku access, thermal diagnostics and VM control
 
-This slice adds an explicit authorization screen and one privileged operation:
-reading `dumpsys thermalservice`. It does not expose an arbitrary shell, change
-settings, or request root. The existing `termux-capabilities` command stays read-only.
+The explicit authorization screen grants Shizuku access for thermal diagnostics
+(`dumpsys thermalservice`) and for creating and controlling the fixed Arch VM and
+its host network bridge. VM operations include session management, memory controls
+and guest disk growth; see [VIRTUALIZATION.md](VIRTUALIZATION.md) for the supported
+operations and lifecycle. This access does not expose an arbitrary Android shell
+or request root. The existing `termux-capabilities` command stays read-only.
 
 ```sh
 termux-shizuku --status
@@ -45,13 +48,20 @@ before using it as data.
 
 ## Privilege and lifecycle boundary
 
-The CLI reaches the existing same-UID API transport. The app checks live Shizuku
-authorization before binding a non-daemon UserService. Its AIDL exposes only
+The CLI reaches the existing same-UID API transport. Thermal diagnostics and VM
+control share the same Shizuku authorization; granting access is not a
+thermal-only permission. The VM UserService requires shell UID 2000 and manages
+the fixed Arch VM, its loopback SSH bridge and its host network backend. It checks
+the API app's caller UID on every exposed operation.
+
+For thermal diagnostics, the app checks live Shizuku authorization before binding
+a non-daemon thermal UserService. Its AIDL exposes only
 `readThermal()` and Shizuku's reserved destroy method: no command strings,
 arguments, filenames, or settings are accepted. The service additionally checks
 that Binder callers have the API app's UID.
 
-The only subprocess is the fixed argv `/system/bin/dumpsys -t 5 thermalservice`.
+The thermal service's only subprocess is the fixed argv
+`/system/bin/dumpsys -t 5 thermalservice`.
 Output is capped at 64 KiB. Subprocess wait is bounded to six seconds, output
 completion to one second, service connection to three seconds, and the outer
 Binder read to eight seconds. A concurrent read returns `busy`. Cleanup kills

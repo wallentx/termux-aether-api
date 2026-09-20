@@ -19,7 +19,7 @@ def verify(directory):
         if not match or match[2] in expected:
             raise ValueError("Invalid or duplicate checksum entry")
         expected[match[2]] = match[1]
-    for name in ("Image", "arch-rootfs.img.zst"):
+    for name in ("Image", "arch-rootfs.img.zst", "arch-network-host"):
         with (directory / name).open("rb") as source:
             digest = hashlib.file_digest(source, "sha256").hexdigest()
         if digest != expected.get(name):
@@ -39,6 +39,8 @@ def main():
     shell(f"test ! -e {BASE} && test ! -L {BASE} && umask 077 && mkdir {stage}")
     # Leave a failed staging directory for inspection; never delete an existing guest.
     subprocess.run(adb + ["push", str(args.artifact / "Image"), stage + "/Image"], check=True, timeout=180)
+    subprocess.run(adb + ["push", str(args.artifact / "arch-network-host"),
+                          stage + "/arch-network-host"], check=True, timeout=180)
     # Decompress the CI artifact into a sparse temporary file so adb can use its
     # compressed sync protocol. Streaming raw bytes through adb shell sends all
     # 6 GiB over Wi-Fi, including the empty filesystem space.
@@ -51,6 +53,7 @@ def main():
         subprocess.run(adb + ["push", "-z", "zstd", str(disk), stage + "/arch-rootfs.img"],
                        check=True, timeout=900)
     shell(f"chmod 600 {stage}/Image {stage}/arch-rootfs.img && "
+          f"chmod 700 {stage}/arch-network-host && "
           f"test ! -e {BASE} && test ! -L {BASE} && mv -T {stage} {BASE}")
     print("Guest staged. In Termux: termux-arch --shell")
 
