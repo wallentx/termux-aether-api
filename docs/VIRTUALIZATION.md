@@ -173,9 +173,12 @@ Ed25519 public key and optional RAM size, never arbitrary host paths or commands
 
 `æ command args...` executes an argument vector. `termux-arch --cwd /root -- command
 args...` selects an explicit guest working directory. Commands launched from
-Termux home default to guest `/root`; commands from other host directories require
-`--cwd` because project sharing is not implemented. A nonexistent guest directory
-fails before command execution. `Æ` opens a login shell in guest home. Exiting a
+Termux home default to guest `/root`. Selected projects can be shared with
+`termux-arch-share` over SFTP/SSHFS; see the [CLI sharing guide](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities#live-project-sharing).
+Automatic mapping of arbitrary host directories is not available: use `--cwd`
+with the corresponding guest path when launching from another host directory.
+A nonexistent guest directory fails before command execution. `Æ` opens a login
+shell in guest home. Exiting a
 shell releases its session lease. The last session exits by cleanly shutting down
 Arch and releasing its RAM by default. `Æ --keep-memory` or
 `æ --keep-memory command args...` instead suspends the guest after the last session,
@@ -350,10 +353,11 @@ storage, plus the compressed artifact and a temporary sparse disk file (up to
 checksums are separate from ongoing VM lifecycle operations. A rolling upstream
 tarball change intentionally fails the pinned snapshot check until reviewed.
 
-Device acceptance: verify actual Arch readiness, repeated-start reuse, clean
-stop, restart, and cleanup after killing the owned service. Until these pass,
-boot support remains experimental. Writable storage, authenticated guest command
-transport, project sharing, `Æ`/`æ` wiring and PRoot comparison remain follow-ups.
+Device acceptance covers actual Arch readiness, repeated-start reuse, clean
+stop, restart, and cleanup after killing the owned service. Writable storage,
+authenticated guest commands, selected project sharing and `Æ`/`æ` launchers are
+implemented; later sections record validation. Controlled PRoot comparison
+remains separate work.
 
 Implementation references: [AOSP JSON config schema](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/libs/vmconfig/src/lib.rs),
 [AOSP platform VM runner](https://android.googlesource.com/platform/packages/modules/Virtualization/+/refs/heads/main/android/vm/src/run.rs),
@@ -449,8 +453,9 @@ same file contents and SSH host key. Both stops confirmed the guest remounted
 root read-only and the VM stopped. The final Android list contains no owned VM.
 
 Readiness observations were 8989 ms initially and 5846 ms on restart. They are not
-PRoot comparisons. Guest networking, Android project sharing, resource tuning,
-and controlled performance benchmarking remain separate work.
+PRoot comparisons. Those timings predate the guest networking, selected project
+sharing and resource controls now described above. Controlled comparative
+performance benchmarking remains separate work.
 
 `guest/arch/workspace_test.py` runs these checks from the real Termux runtime.
 It writes `~/arch-workspace-test-20260919/report.json` and a PTY transcript, creates

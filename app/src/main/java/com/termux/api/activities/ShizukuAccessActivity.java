@@ -97,7 +97,7 @@ public final class ShizukuAccessActivity extends Activity {
             if (!Shizuku.pingBinder()) {
                 status.setText(R.string.shizuku_not_running);
                 request.setEnabled(false);
-            } else if (Shizuku.isPreV11()) {
+            } else if (Shizuku.getVersion() < 13) {
                 status.setText(R.string.shizuku_too_old);
                 request.setEnabled(false);
             } else {
@@ -113,7 +113,7 @@ public final class ShizukuAccessActivity extends Activity {
 
     private void requestAccess() {
         try {
-            if (!Shizuku.pingBinder() || Shizuku.isPreV11()) {
+            if (!Shizuku.pingBinder() || Shizuku.getVersion() < 13) {
                 refresh();
                 return;
             }

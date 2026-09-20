@@ -18,11 +18,21 @@ case ${reason:-} in
         done
         chmod 644 "$temporary"
         mv -f -- "$temporary" "$target"
-        if [[ $interface == avf0 || ! -e /run/termux-network/resolv.avf0.conf ]]; then
-            ln -sfn "$target" /run/termux-network/resolv.conf
-        fi
         ;;
     EXPIRE|FAIL|STOP|STOPPED|NOCARRIER|DEPARTED)
         rm -f "$target"
         ;;
+    *) exit 0 ;;
 esac
+
+# Re-select after both lease acquisition and loss. avf0 has the preferred route;
+# a surviving eth0 lease must keep DNS usable when that preferred lease expires.
+if [[ -f /run/termux-network/resolv.avf0.conf ]]; then
+    target=/run/termux-network/resolv.avf0.conf
+elif [[ -f /run/termux-network/resolv.eth0.conf ]]; then
+    target=/run/termux-network/resolv.eth0.conf
+else
+    rm -f /run/termux-network/resolv.conf
+    exit 0
+fi
+ln -sfn "$target" /run/termux-network/resolv.conf
