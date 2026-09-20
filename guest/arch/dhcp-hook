@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+# Called by dhcpcd after it applies addresses/routes. Never evaluate DHCP values.
+set -eu
+[[ ${interface:-} == eth0 || ${interface:-} == avf0 ]] || exit 0
+target=/run/termux-network/resolv.$interface.conf
+case ${reason:-} in
+    BOUND|RENEW|REBIND|REBOOT|INFORM)
+        umask 022
+        temporary=$(mktemp /run/termux-network/resolv.XXXXXX)
+        trap 'rm -f -- "$temporary"' EXIT
+        printf '# Managed by termux-dhcp-hook\n' > "$temporary"
+        for server in ${new_domain_name_servers:-}; do
+            # DHCPv4 supplies IPv4 DNS addresses. Reject text and extra directives.
+            [[ $server =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || continue
+            IFS=. read -r a b c d <<< "$server"
+            ((10#$a <= 255 && 10#$b <= 255 && 10#$c <= 255 && 10#$d <= 255)) || continue
+            printf 'nameserver %s\n' "$server" >> "$temporary"
+        done
+        chmod 644 "$temporary"
+        mv -f -- "$temporary" "$target"
+        ;;
+    EXPIRE|FAIL|STOP|STOPPED|NOCARRIER|DEPARTED)
+        rm -f "$target"
+        ;;
+    *) exit 0 ;;
+esac
+
+# Re-select after both lease acquisition and loss. avf0 has the preferred route;
+# a surviving eth0 lease must keep DNS usable when that preferred lease expires.
+if [[ -f /run/termux-network/resolv.avf0.conf ]]; then
+    target=/run/termux-network/resolv.avf0.conf
+elif [[ -f /run/termux-network/resolv.eth0.conf ]]; then
+    target=/run/termux-network/resolv.eth0.conf
+else
+    rm -f /run/termux-network/resolv.conf
+    exit 0
+fi
+ln -sfn "$target" /run/termux-network/resolv.conf

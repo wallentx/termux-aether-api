@@ -1,0 +1,79 @@
+#!/usr/bin/bash
+# Minimal PID 1 for the fresh, persistent Arch workspace. No Android paths mounted.
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+mount -t devtmpfs devtmpfs /dev
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs tmpfs /run
+install -m 755 /usr/local/sbin/termux-vm-shutdown /run/termux-vm-shutdown
+mount -t tmpfs tmpfs /tmp
+mkdir -p /dev/pts /run/sshd
+mount -t devpts devpts /dev/pts -o gid=5,mode=620
+ln -sf /proc/self/fd /dev/fd
+ln -sf /proc/self/fd/0 /dev/stdin
+ln -sf /proc/self/fd/1 /dev/stdout
+ln -sf /proc/self/fd/2 /dev/stderr
+exec </dev/hvc0 >/dev/hvc0 2>&1
+stty -echo
+# ext4 replays its journal on mount. Refuse sessions if remounting writable fails.
+mount -o remount,rw /
+ci=false
+for word in $(cat /proc/cmdline); do
+    case "$word" in
+        termux_ci=1) ci=true ;;
+        termux_epoch=*)
+            epoch=${word#termux_epoch=}
+            [[ $epoch =~ ^[0-9]{10}$ ]] || { echo 'Invalid host clock seed'; exit 1; }
+            date -u -s "@$epoch"
+            ;;
+    esac
+done
+umask 077
+mkdir -p /root/.ssh
+key=$(dd if=/dev/vdb bs=4096 count=1 status=none | tr -d '\000')
+[[ $key =~ ^ssh-ed25519\ [A-Za-z0-9+/]{68}$ ]] || { echo 'Invalid SSH seed'; exit 1; }
+printf '%s\n' "$key" > /root/.ssh/authorized_keys
+chmod 700 /root /root/.ssh
+chmod 600 /root/.ssh/authorized_keys
+if [[ ! -e /etc/ssh/ssh_host_ed25519_key ]]; then
+    ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
+fi
+# Initialize trust on the device, never ship a private signing key in an image.
+if [[ ! -e /etc/pacman.d/gnupg/.termux-initialized ]]; then
+    pacman-key --init
+    pacman-key --populate archlinuxarm
+    touch /etc/pacman.d/gnupg/.termux-initialized
+fi
+ip link set lo up
+if $ci; then
+    /usr/local/sbin/termux-vm-network eth0 > /run/termux-network.log 2>&1 &
+    # Only CI exposes SSH on Ethernet. Production SSH stays on loopback + vsock.
+    /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux -o ListenAddress=0.0.0.0:2222 &
+else
+    /usr/local/sbin/termux-vm-network > /run/termux-network.log 2>&1 &
+    /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux &
+    /usr/local/sbin/termux-vsock-ssh &
+    vsock_pid=$!
+    sleep 0.1
+    kill -0 "$vsock_pid"
+fi
+printf '\nTERMUX_ARCH_BOOT_V2\n'
+cat /etc/os-release
+uname -a
+pacman --version
+printf 'root_mount: '
+findmnt -n -o SOURCE,FSTYPE,OPTIONS /
+printf 'TERMUX_ARCH_HOST_KEY_V2 %s\n' "$(cut -d ' ' -f 1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
+printf 'TERMUX_ARCH_READY_V2\n'
+while true; do
+    if IFS= read -r command; then
+        case "$command" in
+            poweroff)
+                exec /run/termux-vm-shutdown
+                ;;
+        esac
+    else
+        sleep 1
+    fi
+done

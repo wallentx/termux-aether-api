@@ -7,6 +7,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     env:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -16,14 +18,21 @@ jobs:
         with:
           ref: ${{ env.GITHUB_REF }}
 
+      - uses: actions/setup-java@v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install SDK and native tools
+        run: sdkmanager 'platforms;android-37.2' 'build-tools;37.0.0' 'ndk;29.0.14206865' 'cmake;3.22.1'
       - name: Build and upload files to release
         shell: bash {0}
         run: |
           exit_on_error() {
               echo "$1"
-              echo "Deleting '$RELEASE_VERSION_NAME' release and '$GITHUB_REF' tag"
-              hub release delete "$RELEASE_VERSION_NAME"
-              git push --delete origin "$GITHUB_REF"
               exit 1
           }
 
@@ -35,11 +44,12 @@ jobs:
 
           APK_DIR_PATH="./app/build/outputs/apk/debug"
           APK_VERSION_TAG="$RELEASE_VERSION_NAME+github.debug"
-          APK_BASENAME_PREFIX="termux-api-app_$APK_VERSION_TAG"
+          APK_BASENAME_PREFIX="termux-aether-api_$APK_VERSION_TAG"
 
           echo "Building APK file for '$RELEASE_VERSION_NAME' release with '$APK_VERSION_TAG' tag"
+          export TERMUX_API_APP__BUILD__APP_VERSION_NAME="${RELEASE_VERSION_NAME/v/}"
           export TERMUX_API_APP__BUILD__APK_VERSION_TAG="$APK_VERSION_TAG" # Used by app/build.gradle
-          if ! ./gradlew assembleDebug; then
+          if ! ./gradlew :app:testDebugUnitTest :app:assembleDebug; then
             exit_on_error "Build failed for '$RELEASE_VERSION_NAME' release with '$APK_VERSION_TAG' tag."
           fi
 
@@ -48,6 +58,14 @@ jobs:
             files_found="$(ls "$APK_DIR_PATH")"
             exit_on_error "Failed to find built APK file at '$APK_DIR_PATH/${APK_BASENAME_PREFIX}.apk'. Files found: "$'\n'"$files_found"
           fi
+
+          expected_code=$(sed -n 's/^[[:space:]]*versionCode \([0-9]*\)$/\1/p' app/build.gradle)
+          test -n "$expected_code" || exit_on_error "Missing versionCode"
+          apkanalyzer manifest application-id "$APK_DIR_PATH/${APK_BASENAME_PREFIX}.apk" | grep -Fx 'com.termux.api' || exit_on_error "Wrong application ID"
+          apkanalyzer manifest version-code "$APK_DIR_PATH/${APK_BASENAME_PREFIX}.apk" | grep -Fx "$expected_code" || exit_on_error "Wrong versionCode"
+          apkanalyzer manifest version-name "$APK_DIR_PATH/${APK_BASENAME_PREFIX}.apk" | grep -Fx "${RELEASE_VERSION_NAME/v/}" || exit_on_error "Wrong versionName"
+          "$ANDROID_HOME/build-tools/37.0.0/apksigner" verify --print-certs "$APK_DIR_PATH/${APK_BASENAME_PREFIX}.apk" > "$RUNNER_TEMP/apk-cert.txt" || exit_on_error "APK signature verification failed"
+          grep -qi 'certificate SHA-256 digest: b6da01480eefd5fbf2cd3771b8d1021ec791304bdd6c4bf41d3faabad48ee5e1' "$RUNNER_TEMP/apk-cert.txt" || exit_on_error "Unexpected signing certificate"
 
           echo "Generating checksums-sha256.txt file"
           if ! (cd "$APK_DIR_PATH"; sha256sum "${APK_BASENAME_PREFIX}.apk" > checksums-sha256.txt); then
