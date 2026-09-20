@@ -12,6 +12,7 @@ on:
   pull_request:
     branches:
       - master
+      - 'wallentx/capabilities'
   schedule:
     - cron: "15 0 1 */2 *"
   workflow_dispatch:

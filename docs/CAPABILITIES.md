@@ -49,8 +49,9 @@ cannot join the shared UID. The Shizuku provider uses its documented
 The debug certificate is public, so this is compatibility, not a private fork
 signing identity. Moving both apps to a private signing key and separate UIDs
 requires a coordinated app/CLI migration and backup plan. Do not change one app's
-key, package name, shared UID, or receiver visibility independently. AVF/vsock,
-versioned authenticated streaming and guest access remain future work.
+key, package name, shared UID, or receiver visibility independently. The subsequent
+AVF/vsock and authenticated guest integration is documented in
+[the virtualization guide](VIRTUALIZATION.md).
 
 Both apps now default to target SDK 37. Installing an SDK-28 API companion beside
 the SDK-37 app would undermine the intended shared-UID runtime baseline. This
