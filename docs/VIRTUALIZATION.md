@@ -174,7 +174,7 @@ Ed25519 public key and optional RAM size, never arbitrary host paths or commands
 `æ command args...` executes an argument vector. `termux-arch --cwd /root -- command
 args...` selects an explicit guest working directory. Commands launched from
 Termux home default to guest `/root`. Selected projects can be shared with
-`termux-arch-share` over SFTP/SSHFS; see the [CLI sharing guide](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities#live-project-sharing).
+`termux-arch-share` over SFTP/SSHFS; see the [CLI sharing guide](https://github.com/wallentx/termux-aether-api-package/tree/dev#live-project-sharing).
 Automatic mapping of arbitrary host directories is not available: use `--cwd`
 with the corresponding guest path when launching from another host directory.
 A nonexistent guest directory fails before command execution. `Æ` opens a login

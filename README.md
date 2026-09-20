@@ -1,8 +1,10 @@
 # Termux-Æther:API
 
+Coordinated suite releases: [installation, upgrades and component dependencies](https://github.com/wallentx/termux-aether-app/blob/dev/docs/RELEASES.md). The `v1000.0.0` baseline keeps existing app IDs and data paths.
+
 [![Build](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml/badge.svg?branch=dev)](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev)
 
-The Android companion for [Termux-Æther](https://github.com/wallentx/termux-aether).
+The Android companion for [Termux-Æther](https://github.com/wallentx/termux-aether-app).
 It extends [Termux:API](https://github.com/termux/termux-api) with device capability
 reporting, Shizuku-backed diagnostics, and an on-demand Arch Linux ARM virtual machine.
 Development and validation focus on the **Pixel 11 Pro XL running Android 17**.
@@ -32,8 +34,8 @@ Development and validation focus on the **Pixel 11 Pro XL running Android 17**.
 | Component | Role |
 | --- | --- |
 | This APK | Android APIs, authorization UI, thermal diagnostics, and AVF control |
-| [Termux-Æther](https://github.com/wallentx/termux-aether) | Terminal, Pacman environment, and independent native glibc runtime |
-| [CLI companion](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities) | `termux-capabilities`, `termux-shizuku`, `termux-arch`, `Æ`, `æ`, and related wrappers |
+| [Termux-Æther](https://github.com/wallentx/termux-aether-app) | Terminal, Pacman environment, and independent native glibc runtime |
+| [CLI companion](https://github.com/wallentx/termux-aether-api-package/tree/dev) | `termux-capabilities`, `termux-shizuku`, `termux-arch`, `Æ`, `æ`, and related wrappers |
 | Shizuku | Separately installed and started authorization service for privileged operations |
 | [Arch guest artifacts](https://github.com/wallentx/termux-aether-api/actions/workflows/arch-guest.yml) | Separately staged kernel, root filesystem, and network helper |
 
@@ -42,11 +44,11 @@ The terminal's native Aether/glibc runtime does not need this companion.
 
 ## Setup
 
-1. Install [Termux-Æther](https://github.com/wallentx/termux-aether), then the APK
+1. Install [Termux-Æther](https://github.com/wallentx/termux-aether-app), then the APK
    from a successful [API Build run](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev+event%3Apush).
    Use matching signing certificates. These builds retain `com.termux.api` and
    the shared Termux identity, using the public debug test key.
-2. Install the matching [CLI wrappers](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities).
+2. Install the matching [CLI wrappers](https://github.com/wallentx/termux-aether-api-package/tree/dev).
    Open the API app once, then run `termux-capabilities --json` inside Termux.
 3. For privileged diagnostics, install/start Shizuku and follow
    [the authorization guide](docs/SHIZUKU.md).
@@ -65,7 +67,7 @@ termux-arch-vm --memory-live 6G  # Request a live balloon target within its RAM 
 ```
 
 Project sharing uses Termux `rclone` and guest `sshfs`; an active share keeps the
-VM in use. See the [CLI sharing guide](https://github.com/wallentx/termux-api-package/tree/wallentx/capabilities#live-project-sharing).
+VM in use. See the [CLI sharing guide](https://github.com/wallentx/termux-aether-api-package/tree/dev#live-project-sharing).
 Live memory adjustment is manual, not automatic pressure-based sizing.
 
 ## Tested capabilities and limits
@@ -74,7 +76,7 @@ Pixel tests cover persistent guest data, shell/inline commands, session lifetime
 suspension/resume, network recovery, shared-file read/write access, 6-to-16 GiB disk
 growth, and reclaiming/restoring 2 GiB from an 8 GiB guest without restarting it.
 These are functionality checks, not proof of a speed advantage over PRoot.
-[Terminal performance measurements](https://github.com/wallentx/termux-aether/blob/dev/docs/PERFORMANCE.md)
+[Terminal performance measurements](https://github.com/wallentx/termux-aether-app/blob/dev/docs/PERFORMANCE.md)
 belong to the main app.
 
 The guest currently uses a minimal init rather than a normal systemd environment.
