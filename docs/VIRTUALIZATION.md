@@ -237,7 +237,7 @@ policy and internet reachability require Pixel testing. No PRoot speedup is clai
 | Host-matched vCPUs, initially 8 GiB RAM, 6 GiB disk | Exposes the host CPU topology for parallel workloads. Geekbench 7 ARM preview triggered guest OOM kills with the former 4 GiB ceiling. Change the RAM ceiling with `--memory` at launch; disk growth and memory ballooning are separate changes. Android still schedules VM threads alongside other apps. |
 | Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
 | Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
-| No automatically shared Android directories | Use the CLI's `termux-arch-share` for selected paths over SFTP/SSHFS. VIRTIO_FS is not enabled in the current kernel. |
+| No automatically shared Android directories | Use the CLI's `termux-arch-share` for selected paths over SFTP/SSHFS. The installed kernel has no verified Virtio-FS support. Built-in driver configuration and a separate [diskless mount probe](../guest/arch/virtiofs-probe/README.md) are prepared for CI and device validation; no production shares are enabled. |
 | DRM, audio, WLAN, Bluetooth, modules disabled | Smaller fixed kernel; enabling guest drivers alone cannot provide host virtual devices or passthrough. Modules need matching installed files on each kernel upgrade. |
 | Minimal Bash PID 1 | Fast shell workspace; normal systemd service management is unavailable. |
 | Password SSH, forwarding, tunnels disabled | Only the device's generated key opens guest sessions. No new guest-to-host forwarding capability. |

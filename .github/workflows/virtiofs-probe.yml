@@ -1,0 +1,82 @@
+name: Virtio-FS diskless probe
+on:
+  push:
+    branches: ['wallentx/**']
+    paths: ['guest/arch/virtiofs-probe/**', 'guest/arch/kernel.config', 'guest/arch/build.sh', '.github/workflows/virtiofs-probe.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: virtiofs-probe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install isolated guest build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc bison flex libssl-dev libelf-dev qemu-system-arm virtiofsd
+      - name: Restore guest kernel
+        id: kernel
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            guest-out/Image
+            guest-out/kernel.config
+          key: arch-kernel-v1-6.18.52-${{ hashFiles('guest/arch/kernel.config') }}
+      - name: Build guest kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        run: bash guest/arch/build.sh kernel
+      - name: Verify built-in probe drivers
+        run: |
+          for option in FUSE_FS VIRTIO_FS BLK_DEV_INITRD RD_GZIP; do
+            grep -qx "CONFIG_$option=y" guest-out/kernel.config
+          done
+      - name: Save guest kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            guest-out/Image
+            guest-out/kernel.config
+          key: ${{ steps.kernel.outputs.cache-primary-key }}
+      - name: Build and validate diskless initramfs
+        run: |
+          python3 -m unittest discover -s guest/arch/virtiofs-probe -p 'test_*.py'
+          aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror guest/arch/virtiofs-probe/init.c -o guest-out/probe-init
+          python3 guest/arch/virtiofs-probe/build_initramfs.py guest-out/probe-init guest-out/probe-initramfs.cpio.gz
+          sudo --preserve-env=GITHUB_ACTIONS,RUNNER_TEMP python3 guest/arch/virtiofs-probe/ci_test.py guest-out
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'build-tools;36.0.0'
+      - name: Package Pixel probe
+        run: |
+          mkdir -p "$RUNNER_TEMP/probe-classes"
+          javac --release 8 -d "$RUNNER_TEMP/probe-classes" guest/arch/virtiofs-probe/VirtioFsProbe.java
+          "$ANDROID_HOME/build-tools/36.0.0/d8" --min-api 35 --output guest-out/probe.jar "$RUNNER_TEMP"/probe-classes/*.class
+          printf 'commit=%s\npurpose=diskless-virtiofs-probe\n' "$GITHUB_SHA" > guest-out/probe-provenance.txt
+          cd guest-out
+          sha256sum Image kernel.config probe-initramfs.cpio.gz probe.jar probe-provenance.txt > PROBE_SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: virtiofs-probe-${{ github.sha }}
+          path: |
+            guest-out/Image
+            guest-out/kernel.config
+            guest-out/probe-initramfs.cpio.gz
+            guest-out/probe.jar
+            guest-out/probe-provenance.txt
+            guest-out/PROBE_SHA256SUMS
+            guest-out/virtiofs-*.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve failed probe logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtiofs-probe-failure-${{ github.sha }}
+          path: guest-out/virtiofs-*.txt
+          if-no-files-found: ignore

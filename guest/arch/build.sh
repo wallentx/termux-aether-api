@@ -21,7 +21,7 @@ cd "linux-$kernel_version"
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
 scripts/kconfig/merge_config.sh -m .config "$source_dir/kernel.config"
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-for option in VIRTIO_PCI VIRTIO_MMIO VIRTIO_BLK VIRTIO_CONSOLE EXT4_FS DEVTMPFS_MOUNT MAGIC_SYSRQ SECURITY_LANDLOCK; do
+for option in VIRTIO_PCI VIRTIO_MMIO VIRTIO_BLK VIRTIO_CONSOLE EXT4_FS FUSE_FS VIRTIO_FS BLK_DEV_INITRD RD_GZIP DEVTMPFS_MOUNT MAGIC_SYSRQ SECURITY_LANDLOCK; do
     grep -qx "CONFIG_$option=y" .config
 done
 grep -Eq '^CONFIG_LSM="([^" ]*,)?landlock(,[^" ]*)?"$' .config
