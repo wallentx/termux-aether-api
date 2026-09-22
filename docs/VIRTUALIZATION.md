@@ -237,7 +237,7 @@ policy and internet reachability require Pixel testing. No PRoot speedup is clai
 | Host-matched vCPUs, initially 8 GiB RAM, 6 GiB disk | Exposes the host CPU topology for parallel workloads. Geekbench 7 ARM preview triggered guest OOM kills with the former 4 GiB ceiling. Change the RAM ceiling with `--memory` at launch; disk growth and memory ballooning are separate changes. Android still schedules VM threads alongside other apps. |
 | Landlock enabled | Pacman 7's filesystem sandbox requires kernel enforcement; disabling the sandbox is not the fix. |
 | Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
-| No automatically shared Android directories | Use the CLI's `termux-arch-share` for selected paths over SFTP/SSHFS. The [diskless mount probe](../guest/arch/virtiofs-probe/README.md) passed CI and Pixel read/write testing for Android shared storage. The [reversible kernel upgrade](../guest/arch/kernel-upgrade/README.md) also passed on the Pixel's existing Arch disk. Its new kernel supports Virtio-FS; normal-session exports/mounts are not integrated yet, and private Termux directories still need SSHFS. |
+| Sharing disabled until explicitly configured | `termux-arch-vm --share-enable [ANDROID_FOLDER]` opts into Virtio-FS at `/mnt/android`, defaulting to `Download/AetherShared`. Requires the updated kernel and guest helpers. The mount follows normal VM/session lifetime; `--share-disable` while stopped disables subsequent exports without deleting files. Private Termux directories still use `termux-arch-share` over SSHFS. |
 | DRM, audio, WLAN, Bluetooth, modules disabled | Smaller fixed kernel; enabling guest drivers alone cannot provide host virtual devices or passthrough. Modules need matching installed files on each kernel upgrade. |
 | Minimal Bash PID 1 | Fast shell workspace; normal systemd service management is unavailable. |
 | Password SSH, forwarding, tunnels disabled | Only the device's generated key opens guest sessions. No new guest-to-host forwarding capability. |
@@ -475,8 +475,11 @@ is interrupted, retry the same size; do not replace the image.
 
 `termux-arch-vm --memory-live 6G` requests a balloon target on a running guest
 whose launch ceiling is at least 6 GiB. `--memory-live 8G` restores an 8 GiB guest's
-full ceiling. Status exposes `memory_balloon_enabled` and `memory_balloon_bytes`;
-requests fail explicitly if this host disables balloon control. Reclamation is
+full ceiling. Status exposes cached `memory_balloon_enabled`; it no longer polls
+guest balloon statistics (`memory_balloon_bytes=null`, `memory_balloon_stats=not_polled`).
+A synchronous stats request can block while the guest is suspended and prevent
+resume/shutdown through the same owner lock. Explicit sizing requests still work
+and fail if this host disables balloon control. Reclamation is
 asynchronous and not proof of exact resident memory. This is manual live sizing;
 automatic pressure-based resizing is not enabled. Avoid shrinking below the active
 workload's needs. Suspend/shutdown still follow the session policy.
@@ -496,3 +499,18 @@ API `60018b9` and CLI `3a95078` passed on the Pixel:
 This verifies manual resource controls, not automatic memory-pressure tuning.
 The backup remains at
 `/data/local/tmp/termux-arch-v2/arch-rootfs.before-resize-20260919.img`.
+
+### Pixel shared-storage validation (2026-09-22)
+
+The [normal-session Virtio-FS checks](validation/shared-storage-2026-09-22/README.md)
+passed with API `adc3dc2`, guest helpers `b2b5d15` and the verified kernel already
+installed. `Download/AetherShared` is mounted at `/mnt/android` on each enabled
+boot, including ordinary `Æ`/`æ` sessions. Bidirectional writes, rename, host
+edits after resume, restart persistence, automatic unmount/shutdown and
+disable/re-enable all passed. The setting is off on a fresh installation.
+
+Run `termux-arch-vm --share-enable [ANDROID_FOLDER]` while stopped to opt in;
+omitting the folder selects `/storage/emulated/0/Download/AetherShared`.
+`--share-disable` stops exporting on later boots without deleting files. The
+guest mount uses `nodev,nosuid,noexec`; private Termux paths still need SSHFS.
+Use `termux-arch --cwd /mnt/android --shell` to open the selected share.
