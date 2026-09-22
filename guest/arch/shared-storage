@@ -1,0 +1,20 @@
+#!/usr/bin/bash
+# Fixed guest mountpoint; host path selection and export belong to the AVF owner.
+set -eu
+target=/mnt/android
+if [[ ${1:-} != mount ]]; then
+    echo 'usage: termux-vm-shared-storage mount' >&2
+    exit 2
+fi
+# Refuse to hide existing guest files or follow a user-created mountpoint link.
+[[ ! -L /mnt && ! -L $target ]]
+mkdir -p "$target"
+if mountpoint -q "$target"; then
+    [[ $(findmnt -rn -M "$target" -o FSTYPE) == virtiofs ]]
+    [[ $(findmnt -rn -M "$target" -o SOURCE) == aether_shared ]]
+else
+    [[ -z $(find "$target" -mindepth 1 -maxdepth 1 -print -quit) ]]
+    timeout 8 mount -t virtiofs -o nodev,nosuid,noexec aether_shared "$target"
+fi
+[[ $(findmnt -rn -M "$target" -o FSTYPE) == virtiofs ]]
+printf 'TERMUX_ARCH_SHARED_MOUNTED_V1\n'

@@ -24,7 +24,7 @@ final class ArchVmInstance {
     final InputStream console;
     final OutputStream input;
 
-    ArchVmInstance(Context context, File base, long memoryBytes) throws Exception {
+    ArchVmInstance(Context context, File base, long memoryBytes, String sharedPath) throws Exception {
         Class<?> platform = Class.forName("android.system.virtualmachine.VirtualizationService");
         Method instance = platform.getDeclaredMethod("getInstance");
         instance.setAccessible(true);
@@ -54,6 +54,18 @@ final class ArchVmInstance {
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
                     "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
                             + (System.currentTimeMillis() / 1000));
+            if (sharedPath != null) {
+                ArchVmSharedStorage.validateDirectory(sharedPath);
+                customBuilderType.getMethod("addParam", String.class).invoke(custom, "termux_shared_storage=1");
+                Class<?> sharedType = Class.forName(customType.getName() + "$SharedPath");
+                // Verified on CP41.260828.004.A8: arg 8 maps to the service's
+                // socket basename. The service owns the backend and its lifetime.
+                Object shared = sharedType.getConstructor(String.class, int.class, int.class,
+                        int.class, int.class, int.class, String.class, String.class, String.class)
+                        .newInstance(sharedPath, 2000, 2000, 0, 0, 0, ArchVmSharedStorage.TAG,
+                                "fs.sock", new File(base, "unused-fs.sock").getPath());
+                customBuilderType.getMethod("addSharedPath", sharedType).invoke(custom, shared);
+            }
             // Pixel's current preview virtmgr emits --net, but its crosvm rejects
             // that option before boot. Keep native NIC off until the host is fixed.
             customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);

@@ -32,7 +32,8 @@ public final class VirtualizationAPI {
                     ? CapabilitiesAPI.probe(() -> collect(context))
                     : CapabilitiesAPI.probe(() -> ArchVmAPI.call(context, operation,
                             intent.getStringExtra("ssh_public_key"), memory, intent.getStringExtra("session_token"),
-                            intent.getBooleanExtra("keep_memory", false), intent.getStringExtra("disk_bytes")));
+                            intent.getBooleanExtra("keep_memory", false), intent.getStringExtra("disk_bytes"),
+                            intent.getStringExtra("shared_path")));
             report.put("schema_version", 1).put("operation", operation);
             out.println(report.toString(2));
         });

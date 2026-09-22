@@ -2,7 +2,7 @@ name: Arch AVF guest
 on:
   push:
     branches: ['dev', 'wallentx/**']
-    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
+    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/shared-storage', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
   workflow_dispatch:
 permissions:
   contents: read

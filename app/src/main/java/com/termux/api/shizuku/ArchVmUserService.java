@@ -40,6 +40,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private String hostKey, authorizedKey, failure;
     private int memoryMiB;
     private String memoryPreferenceError;
+    private String sharedStoragePath, sharedStorageError;
+    private boolean sharedStorageMounted;
     private long startedAt;
     private Long readyAfterMs;
     private CountDownLatch ownerFinished = new CountDownLatch(0);
@@ -113,6 +115,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 Os.chmod(owner.getPath(), 0600);
                 lock = lockFile.getChannel().tryLock();
                 if (lock == null) throw new IllegalStateException("Guest is already owned");
+                sharedStoragePath = savedSharedStorage();
+                ArchVmSharedStorage.validateDirectory(sharedStoragePath);
+                sharedStorageMounted = false;
+                sharedStorageError = null;
                 validateFile(new File(BASE, "Image"), false, 4096, 256L * 1024 * 1024);
                 validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, Long.MAX_VALUE);
                 File seed = new File(BASE, "authorized-key.bin");
@@ -146,7 +152,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             ArchVmInstance running = null;
             boolean attemptedStart = false;
             try {
-                running = new ArchVmInstance(context, BASE, launchMemoryBytes);
+                running = new ArchVmInstance(context, BASE, launchMemoryBytes, sharedStoragePath);
                 synchronized (guard) { child = running; }
                 final ArchVmInstance current = running;
                 Thread drain = new Thread(() -> drain(current), "arch-vm-console");
@@ -201,11 +207,18 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     if (child != instance) return;
                     output.append(new String(bytes, 0, count, StandardCharsets.UTF_8));
                     if (hostKey == null) hostKey = ArchVmProtocol.hostKey(output.toString());
+                    if (sharedStoragePath != null && output.indexOf(ArchVmSharedStorage.MOUNTED) >= 0)
+                        sharedStorageMounted = true;
+                    if (output.indexOf(ArchVmSharedStorage.UNMOUNTED) >= 0) sharedStorageMounted = false;
                     if (!ready && hostKey != null && output.indexOf("TERMUX_ARCH_READY_V2") >= 0) {
                         bridge = new ArchVmBridge(child);
                         network = new ArchVmNetwork(child, BASE);
                         ready = true;
                         readyAfterMs = SystemClock.elapsedRealtime() - startedAt;
+                        if (sharedStoragePath != null && !sharedStorageMounted) {
+                            sharedStorageError = "shared_storage_not_mounted_check_guest_helpers";
+                            failure = sharedStorageError;
+                        }
                         try { saveMemoryMiB(); memoryPreferenceError = null; }
                         catch (Exception error) {
                             memoryPreferenceError = "Could not save RAM preference: " + error.getClass().getSimpleName();
@@ -315,6 +328,52 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Override public String status() { authorize(); synchronized (guard) { return report(); } }
     @Override public String stop() { authorize(); return stopOwned(); }
 
+    @Override public String configureSharedStorage(String path) {
+        authorize();
+        synchronized (guard) {
+            sessions.expire(SystemClock.elapsedRealtime());
+            if (ownerActive || sessions.count() != 0) return memoryError("shared_storage_change_requires_stop");
+            File temporary = null;
+            try {
+                String selected = ArchVmSharedStorage.parse(path);
+                ArchVmSharedStorage.validateDirectory(selected);
+                validateFile(BASE, true, 0, 0);
+                File owner = new File(BASE, "owner.lock");
+                validateFile(owner, false, 0, 0);
+                try (RandomAccessFile handle = new RandomAccessFile(owner, "rw");
+                     FileLock exclusive = handle.getChannel().tryLock()) {
+                    if (exclusive == null) return memoryError("guest_already_owned");
+                    File destination = new File(BASE, "shared-storage-path");
+                    if (destination.exists() || java.nio.file.Files.isSymbolicLink(destination.toPath()))
+                        validateFile(destination, false, 0, 4097);
+                    temporary = File.createTempFile("shared-storage-", ".tmp", BASE);
+                    Os.chmod(temporary.getPath(), 0600);
+                    try (FileOutputStream stream = new FileOutputStream(temporary)) {
+                        stream.write((selected == null ? "" : selected).getBytes(StandardCharsets.UTF_8));
+                        stream.getFD().sync();
+                    }
+                    java.nio.file.Files.move(temporary.toPath(), destination.toPath(),
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                sharedStoragePath = selected;
+                sharedStorageMounted = false;
+                sharedStorageError = null;
+                // Clear a prior sharing error after an explicit stopped-state correction.
+                if (failure != null && failure.startsWith("shared_storage_")) failure = null;
+                return report();
+            } catch (Exception error) {
+                return memoryError("shared_storage_config_failed: " + error.getClass().getSimpleName());
+            } finally { if (temporary != null) temporary.delete(); }
+        }
+    }
+
+    private String savedSharedStorage() throws Exception {
+        File file = new File(BASE, "shared-storage-path");
+        if (!file.exists() && !java.nio.file.Files.isSymbolicLink(file.toPath())) return null;
+        validateFile(file, false, 0, 4097);
+        return ArchVmSharedStorage.parse(new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    }
+
     private String stopOwned() {
         ArchVmInstance running;
         CountDownLatch finished;
@@ -358,6 +417,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private void stopped() {
         ownerActive = stopping = suspended = false;
+        sharedStorageMounted = false;
         sessions.clear();
         guard.notifyAll();
         if (bridge != null) bridge.close();
@@ -378,6 +438,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private String report() {
         try {
+            String configuredShare = sharedStoragePath;
+            String shareError = sharedStorageError;
+            if (!ownerActive) try { configuredShare = savedSharedStorage(); }
+            catch (Exception error) { shareError = "invalid_shared_storage_config"; }
             Object nextMemory;
             try { nextMemory = savedMemoryMiB(); }
             catch (Exception invalid) {
@@ -390,7 +454,13 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (Boolean.TRUE.equals(balloonEnabled)) balloonBytes = child.balloonBytes();
             } catch (Exception ignored) { }
             File disk = new File(BASE, "arch-rootfs.img");
-            return new JSONObject().put("memory_balloon_enabled", balloonEnabled)
+            return new JSONObject().put("shared_storage_supported", true)
+                    .put("shared_storage_enabled", configuredShare != null)
+                    .put("shared_storage_host_path", configuredShare == null ? JSONObject.NULL : configuredShare)
+                    .put("shared_storage_guest_path", ArchVmSharedStorage.GUEST_PATH)
+                    .put("shared_storage_mounted", ownerActive && sharedStorageMounted)
+                    .put("shared_storage_error", shareError == null ? JSONObject.NULL : shareError)
+                    .put("memory_balloon_enabled", balloonEnabled)
                     .put("memory_balloon_bytes", balloonBytes).put("disk_capacity_bytes", disk.length())
                     .put("status", failure != null ? "error" : starting ? "starting"
                             : ownerActive ? stopping ? "stopping" : suspended ? "suspended" : ready ? "ready" : "booting" : "stopped")

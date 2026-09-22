@@ -40,6 +40,7 @@ sha256sum arch.tar.gz > "$out/rootfs-source.sha256"
 printf 'source=%s\nkernel=%s\ncommit=%s\n' "$arch_url" "$kernel_version" "$GITHUB_SHA" > "$out/provenance.txt"
 sudo bsdtar -xpf arch.tar.gz -C root
 sudo install -m 755 "$source_dir/init" root/usr/local/sbin/termux-vm-init
+sudo install -m 755 "$source_dir/shared-storage" root/usr/local/sbin/termux-vm-shared-storage
 sudo install -m 755 "$source_dir/network" root/usr/local/sbin/termux-vm-network
 sudo install -D -m 755 "$source_dir/dhcp-hook" root/usr/local/libexec/termux-dhcp-hook
 sudo ln -sfn /run/termux-network/resolv.conf root/etc/resolv.conf
@@ -62,6 +63,7 @@ sudo install -m 755 vsock-net root/usr/local/sbin/termux-vsock-net
 # Small update payload for existing guests: never replace their writable disk.
 mkdir -p update
 install -m 755 "$source_dir/init" update/termux-vm-init
+install -m 755 "$source_dir/shared-storage" update/termux-vm-shared-storage
 install -m 755 "$source_dir/network" update/termux-vm-network
 install -m 755 "$source_dir/dhcp-hook" update/termux-dhcp-hook
 install -m 755 landlock-check update/termux-landlock-check
