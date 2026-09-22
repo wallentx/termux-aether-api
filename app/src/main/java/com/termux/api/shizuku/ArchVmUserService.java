@@ -448,11 +448,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 nextMemory = JSONObject.NULL;
                 memoryPreferenceError = "Invalid saved RAM preference: " + invalid.getClass().getSimpleName();
             }
-            Object balloonEnabled = JSONObject.NULL, balloonBytes = JSONObject.NULL;
-            if (child != null && ownerActive && !starting) try {
-                balloonEnabled = child.balloonEnabled();
-                if (Boolean.TRUE.equals(balloonEnabled)) balloonBytes = child.balloonBytes();
-            } catch (Exception ignored) { }
+            // A balloon statistics request waits on the guest. In a suspended VM
+            // it can block indefinitely while holding guard, preventing resume
+            // and shutdown as well as status. Report cached configuration only.
+            Object balloonEnabled = child != null && ownerActive && !starting
+                    ? child.balloonEnabled() : JSONObject.NULL;
             File disk = new File(BASE, "arch-rootfs.img");
             return new JSONObject().put("shared_storage_supported", true)
                     .put("shared_storage_enabled", configuredShare != null)
@@ -461,7 +461,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     .put("shared_storage_mounted", ownerActive && sharedStorageMounted)
                     .put("shared_storage_error", shareError == null ? JSONObject.NULL : shareError)
                     .put("memory_balloon_enabled", balloonEnabled)
-                    .put("memory_balloon_bytes", balloonBytes).put("disk_capacity_bytes", disk.length())
+                    .put("memory_balloon_bytes", JSONObject.NULL)
+                    .put("memory_balloon_stats", "not_polled")
+                    .put("disk_capacity_bytes", disk.length())
                     .put("status", failure != null ? "error" : starting ? "starting"
                             : ownerActive ? stopping ? "stopping" : suspended ? "suspended" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())

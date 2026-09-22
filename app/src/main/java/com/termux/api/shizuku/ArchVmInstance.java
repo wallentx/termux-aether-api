@@ -21,6 +21,7 @@ final class ArchVmInstance {
     private final Class<?> vmInterface;
     private final int deadState;
     private final int notStartedState;
+    private final boolean balloonAvailable;
     final InputStream console;
     final OutputStream input;
 
@@ -102,6 +103,8 @@ final class ArchVmInstance {
             vm = serviceInterface.getMethod("createVm", configType, ParcelFileDescriptor.class,
                     ParcelFileDescriptor.class, ParcelFileDescriptor.class, ParcelFileDescriptor.class)
                     .invoke(service, config, outputPipe[1], inputPipe[0], null, null);
+            // Configuration capability only; never poll guest statistics for status.
+            balloonAvailable = (Boolean) vmInterface.getMethod("isMemoryBalloonEnabled").invoke(vm);
             console = new ParcelFileDescriptor.AutoCloseInputStream(outputPipe[0]);
             input = new ParcelFileDescriptor.AutoCloseOutputStream(inputPipe[1]);
             success = true;
@@ -121,12 +124,7 @@ final class ArchVmInstance {
     }
     void suspend() throws Exception { vmInterface.getMethod("suspend").invoke(vm); }
     void resume() throws Exception { vmInterface.getMethod("resume").invoke(vm); }
-    boolean balloonEnabled() throws Exception {
-        return (Boolean)vmInterface.getMethod("isMemoryBalloonEnabled").invoke(vm);
-    }
-    long balloonBytes() throws Exception {
-        return (Long)vmInterface.getMethod("getActualMemoryBalloonBytes").invoke(vm);
-    }
+    boolean balloonEnabled() { return balloonAvailable; }
     void balloon(long bytes) throws Exception {
         vmInterface.getMethod("setMemoryBalloon", long.class).invoke(vm, bytes);
     }
