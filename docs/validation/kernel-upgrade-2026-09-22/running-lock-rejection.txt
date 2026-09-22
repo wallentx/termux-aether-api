@@ -1,0 +1,6 @@
+java.io.IOException: Arch is owned; stop it before kernel maintenance
+	at KernelUpgrade.operate(KernelUpgrade.java:87)
+	at KernelUpgrade.run(KernelUpgrade.java:168)
+	at KernelUpgrade.main(KernelUpgrade.java:151)
+	at com.android.internal.os.RuntimeInit.nativeFinishInit(Native Method)
+	at com.android.internal.os.RuntimeInit.main(RuntimeInit.java:367)

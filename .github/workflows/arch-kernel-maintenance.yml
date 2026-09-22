@@ -1,0 +1,35 @@
+name: Arch kernel maintenance
+on:
+  push:
+    branches: ['dev', 'wallentx/**']
+    paths: ['guest/arch/kernel-upgrade/**', '.github/workflows/arch-kernel-maintenance.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  helper:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test kernel replacement and rollback
+        run: |
+          mkdir -p "$RUNNER_TEMP/kernel-classes" out
+          javac --release 8 -d "$RUNNER_TEMP/kernel-classes" guest/arch/kernel-upgrade/*.java
+          java -cp "$RUNNER_TEMP/kernel-classes" KernelUpgradeTest
+          python3 -m unittest discover -s guest/arch/kernel-upgrade -p 'test_*.py'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'build-tools;36.0.0'
+      - name: Package Android maintenance helper
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/d8" --min-api 35 --output out/kernel-upgrade.jar "$RUNNER_TEMP/kernel-classes/KernelUpgrade.class"
+          printf 'commit=%s\npurpose=arch-kernel-maintenance\n' "$GITHUB_SHA" > out/provenance.txt
+          cd out
+          sha256sum kernel-upgrade.jar provenance.txt > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arch-kernel-maintenance-${{ github.sha }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 30

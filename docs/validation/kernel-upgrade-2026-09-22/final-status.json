@@ -1,0 +1,8 @@
+{
+  "status": "stopped",
+  "running": false,
+  "clean_shutdown": true,
+  "active_sessions": 0,
+  "disk_capacity_bytes": 17179869184,
+  "memory_mib": 8192
+}
