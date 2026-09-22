@@ -3,8 +3,9 @@
 This is an opt-in developer test for selected **Android shared storage**, not
 private Termux home sharing. The Pixel host attachment was verified on Android
 build `CP41.260828.004.A8`; private-directory traversal was denied by SELinux.
-The mount/read/write implementation here still requires its first CI and Pixel
-run. No performance improvement is claimed.
+The mount/read/write implementation passed CI and a Pixel run on 2026-09-22 UTC.
+See the [validation evidence](../../../docs/validation/virtiofs-2026-09-22/README.md).
+No performance improvement is claimed.
 
 ## What the test does
 

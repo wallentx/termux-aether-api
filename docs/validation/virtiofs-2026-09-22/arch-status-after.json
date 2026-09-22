@@ -1,0 +1,7 @@
+{
+  "status": "stopped",
+  "running": false,
+  "active_sessions": 0,
+  "clean_shutdown": true,
+  "disk_capacity_bytes": 17179869184
+}
