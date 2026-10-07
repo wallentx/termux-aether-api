@@ -8,6 +8,7 @@ import com.termux.api.BuildConfig;
 import com.termux.api.shizuku.ArchVmUserService;
 import com.termux.api.shizuku.ArchVmMemory;
 import com.termux.api.shizuku.ArchVmSharedStorage;
+import com.termux.api.shizuku.ArchVmGraphics;
 import com.termux.api.shizuku.IArchVmService;
 import org.json.JSONObject;
 import java.util.concurrent.CompletableFuture;
@@ -20,12 +21,18 @@ import rikka.shizuku.Shizuku;
 public final class ArchVmAPI {
     private ArchVmAPI() {}
 
-    public static JSONObject call(Context context, String operation, String publicKey, String memory, String token, boolean keepMemory, String diskBytes, String sharedPath) throws org.json.JSONException {
+    public static JSONObject call(Context context, String operation, String publicKey, String memory, String token, boolean keepMemory, String diskBytes, String sharedPath, String graphicsMode) throws org.json.JSONException {
         if (!operation.equals("arch-start") && !operation.equals("arch-status") && !operation.equals("arch-stop")
                 && !operation.equals("arch-session-acquire") && !operation.equals("arch-session-renew")
                 && !operation.equals("arch-session-release") && !operation.equals("arch-memory-live")
                 && !operation.equals("arch-disk-grow") && !operation.equals("arch-share-configure")) {
             return new JSONObject().put("status", "unsupported").put("reason", "unknown_operation");
+        }
+        try {
+            ArchVmGraphics.parse(graphicsMode);
+            if (graphicsMode != null && !operation.equals("arch-start")) throw new IllegalArgumentException();
+        } catch (IllegalArgumentException invalid) {
+            return new JSONObject().put("status", "error").put("reason", "invalid_graphics_mode");
         }
         if (operation.equals("arch-share-configure")) {
             try {
@@ -77,8 +84,8 @@ public final class ArchVmAPI {
             IArchVmService service = IArchVmService.Stub.asInterface(connected.get(3, TimeUnit.SECONDS));
             String json = worker.submit(() -> {
                 switch (operation) {
-                    case "arch-start": return memoryMiB == 0 ? service.start(publicKey)
-                            : service.startWithMemory(publicKey, memoryMiB);
+                    case "arch-start": return graphicsMode != null ? service.startWithGraphics(publicKey, memoryMiB, graphicsMode)
+                            : memoryMiB == 0 ? service.start(publicKey) : service.startWithMemory(publicKey, memoryMiB);
                     case "arch-memory-live": return service.resizeMemory(memoryMiB);
                     case "arch-disk-grow": return service.growDisk(diskSize);
                     case "arch-share-configure": return service.configureSharedStorage(sharedPath);

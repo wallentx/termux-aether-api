@@ -25,7 +25,7 @@ final class ArchVmInstance {
     final InputStream console;
     final OutputStream input;
 
-    ArchVmInstance(Context context, File base, long memoryBytes, String sharedPath) throws Exception {
+    ArchVmInstance(Context context, File base, long memoryBytes, String sharedPath, String graphicsMode) throws Exception {
         Class<?> platform = Class.forName("android.system.virtualmachine.VirtualizationService");
         Method instance = platform.getDeclaredMethod("getInstance");
         instance.setAccessible(true);
@@ -51,7 +51,8 @@ final class ArchVmInstance {
             Class<?> diskType = Class.forName(customType.getName() + "$Disk");
             Object custom = customBuilderType.getConstructor().newInstance();
             customBuilderType.getMethod("setName", String.class).invoke(custom, "termux-arch-v2");
-            customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, new File(base, "Image").getPath());
+            customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, ArchVmGraphics.kernel(base, graphicsMode).getPath());
+            ArchVmGraphics.configure(custom, graphicsMode);
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
                     "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
                             + (System.currentTimeMillis() / 1000));

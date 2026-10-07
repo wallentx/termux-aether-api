@@ -41,6 +41,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private int memoryMiB;
     private String memoryPreferenceError;
     private String sharedStoragePath, sharedStorageError;
+    private String graphicsMode = ArchVmGraphics.NONE;
     private boolean sharedStorageMounted;
     private long startedAt;
     private Long readyAfterMs;
@@ -69,13 +70,22 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     @Override public String startWithMemory(String publicKey, int requestedMemoryMiB) {
+        return startWithGraphics(publicKey, requestedMemoryMiB, null);
+    }
+
+    @Override public String startWithGraphics(String publicKey, int requestedMemoryMiB, String requestedGraphics) {
         authorize();
         if (requestedMemoryMiB < 0) return memoryError("invalid_memory_mib");
+        final String selectedGraphics;
+        try { selectedGraphics = ArchVmGraphics.parse(requestedGraphics); }
+        catch (IllegalArgumentException invalid) { return memoryError("invalid_graphics_mode"); }
         CountDownLatch spawned = new CountDownLatch(1);
         CountDownLatch finished = new CountDownLatch(1);
         final long launchMemoryBytes;
         synchronized (guard) {
             if (ownerActive) {
+                if (!ArchVmGraphics.canReuse(graphicsMode, requestedGraphics))
+                    return memoryError("graphics_change_requires_stop");
                 if (requestedMemoryMiB != 0 && requestedMemoryMiB != memoryMiB)
                     return memoryError("memory_change_requires_stop");
                 if (publicKey != null && !publicKey.equals(authorizedKey))
@@ -96,6 +106,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (sessions.count() == 0) sessions.clear();
                 return report();
             }
+            if (ArchVmGraphics.GFXSTREAM.equals(selectedGraphics)
+                    && !ArchVmGraphics.kernel(BASE, selectedGraphics).isFile())
+                return memoryError("graphics_kernel_missing");
             try {
                 int selected = requestedMemoryMiB == 0 ? savedMemoryMiB() : requestedMemoryMiB;
                 ActivityManager.MemoryInfo host = new ActivityManager.MemoryInfo();
@@ -119,7 +132,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 ArchVmSharedStorage.validateDirectory(sharedStoragePath);
                 sharedStorageMounted = false;
                 sharedStorageError = null;
-                validateFile(new File(BASE, "Image"), false, 4096, 256L * 1024 * 1024);
+                validateFile(ArchVmGraphics.kernel(BASE, selectedGraphics), false, 4096, 256L * 1024 * 1024);
+                graphicsMode = selectedGraphics;
                 validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, Long.MAX_VALUE);
                 File seed = new File(BASE, "authorized-key.bin");
                 if (seed.exists()) validateFile(seed, false, 4096, 4096);
@@ -152,7 +166,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             ArchVmInstance running = null;
             boolean attemptedStart = false;
             try {
-                running = new ArchVmInstance(context, BASE, launchMemoryBytes, sharedStoragePath);
+                running = new ArchVmInstance(context, BASE, launchMemoryBytes, sharedStoragePath, selectedGraphics);
                 synchronized (guard) { child = running; }
                 final ArchVmInstance current = running;
                 Thread drain = new Thread(() -> drain(current), "arch-vm-console");
@@ -455,6 +469,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     ? child.balloonEnabled() : JSONObject.NULL;
             File disk = new File(BASE, "arch-rootfs.img");
             return new JSONObject().put("shared_storage_supported", true)
+                    .put("graphics_configurable", true)
+                    .put("graphics_mode", ownerActive ? graphicsMode : ArchVmGraphics.NONE)
+                    .put("graphics_kernel_present", ArchVmGraphics.kernel(BASE, ArchVmGraphics.GFXSTREAM).isFile())
+                    .put("graphics_rendering", "not_probed")
                     .put("shared_storage_enabled", configuredShare != null)
                     .put("shared_storage_host_path", configuredShare == null ? JSONObject.NULL : configuredShare)
                     .put("shared_storage_guest_path", ArchVmSharedStorage.GUEST_PATH)

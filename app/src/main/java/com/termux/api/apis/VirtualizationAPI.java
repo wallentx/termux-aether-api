@@ -27,13 +27,15 @@ public final class VirtualizationAPI {
         final String operation = argument == null ? "status" : argument;
         String memoryArgument = intent.getStringExtra("memory_mib");
         final String memory = memoryArgument == null && intent.hasExtra("memory_mib") ? "" : memoryArgument;
+        String graphicsArgument = intent.getStringExtra("graphics_mode");
+        final String graphics = graphicsArgument == null && intent.hasExtra("graphics_mode") ? "" : graphicsArgument;
         ResultReturner.returnData(receiver, intent, out -> {
             JSONObject report = "status".equals(operation)
                     ? CapabilitiesAPI.probe(() -> collect(context))
                     : CapabilitiesAPI.probe(() -> ArchVmAPI.call(context, operation,
                             intent.getStringExtra("ssh_public_key"), memory, intent.getStringExtra("session_token"),
                             intent.getBooleanExtra("keep_memory", false), intent.getStringExtra("disk_bytes"),
-                            intent.getStringExtra("shared_path")));
+                            intent.getStringExtra("shared_path"), graphics));
             report.put("schema_version", 1).put("operation", operation);
             out.println(report.toString(2));
         });
