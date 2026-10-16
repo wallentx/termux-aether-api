@@ -1,53 +1,97 @@
-# Termux API
+# Termux-Æther:API
 
-[![Build status](https://github.com/termux/termux-api/workflows/Build/badge.svg)](https://github.com/termux/termux-api/actions)
-[![Join the chat at https://gitter.im/termux/termux](https://badges.gitter.im/termux/termux.svg)](https://gitter.im/termux/termux)
+Coordinated suite releases: [installation, upgrades and component dependencies](https://github.com/wallentx/termux-aether-app/blob/dev/docs/RELEASES.md). The `v1000.0.0` baseline keeps existing app IDs and data paths.
 
-This is an app exposing Android API to command line usage and scripts or programs.
+[![Build](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml/badge.svg?branch=dev)](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev)
 
-When developing or packaging, note that this app needs to be signed with the same
-key as the main Termux app for permissions to work (only the main Termux app are
-allowed to call the API methods in this app).
+The Android companion for [Termux-Æther](https://github.com/wallentx/termux-aether-app).
+It extends [Termux:API](https://github.com/termux/termux-api) with device capability
+reporting, Shizuku-backed diagnostics, and an on-demand Arch Linux ARM virtual machine.
+Development and validation focus on the **Pixel 11 Pro XL running Android 17**.
 
-## Installation
+## What this fork adds
 
-Latest version is `v0.53.0`.
+- **Device status from the shell.** `termux-capabilities` reports CPU/SIMD
+  availability, Android permissions, battery, thermal throttling, storage access,
+  and Shizuku status. Unsupported or denied readings stay explicit.
+- **Authorized Shizuku integration.** Request access through a visible screen and
+  read privileged thermal diagnostics. The tested setup uses ADB-started Shizuku;
+  root is not required. Public capability reporting works without Shizuku.
+- **A hardware-virtualized Arch workspace.** `Æ` opens an interactive shell;
+  `æ command` runs an inline command. AVF runs an ARM64 Linux kernel with a
+  persistent writable root filesystem, authenticated SSH/vsock sessions, and
+  outbound IPv4 networking. This is a VM, not a PRoot environment.
+- **Resources used on demand.** The last session normally shuts Arch down cleanly
+  and releases its RAM. `--keep-memory` suspends it instead. Set RAM at launch,
+  adjust the live balloon target, grow the sparse disk, and share selected Termux
+  project directories without replacing the guest installation.
+- **A modern Android baseline.** Target SDK 37, compile SDK 37.2, and an ARM64
+  default build. Existing Termux:API methods remain in the codebase; individual
+  legacy APIs still need permission and lifecycle testing on Android 17.
 
-Termux:API application can be obtained from [F-Droid](https://f-droid.org/en/packages/com.termux.api/).
+## Components
 
-Additionally we provide per-commit debug builds for those who want to try
-out the latest features or test their pull request. This build can be obtained
-from one of the workflow runs listed on [Github Actions](https://github.com/termux/termux-api/actions/workflows/github_action_build.yml?query=branch%3Amaster+event%3Apush)
-page.
+| Component | Role |
+| --- | --- |
+| This APK | Android APIs, authorization UI, thermal diagnostics, and AVF control |
+| [Termux-Æther](https://github.com/wallentx/termux-aether-app) | Terminal, Pacman environment, and independent native glibc runtime |
+| [CLI companion](https://github.com/wallentx/termux-aether-api-package/tree/dev) | `termux-capabilities`, `termux-shizuku`, `termux-arch`, `Æ`, `æ`, and related wrappers |
+| Shizuku | Separately installed and started authorization service for privileged operations |
+| [Arch guest artifacts](https://github.com/wallentx/termux-aether-api/actions/workflows/arch-guest.yml) | Separately staged kernel, root filesystem, and network helper |
 
-Signature keys of all offered builds are different. Before you switch the
-installation source, you will have to uninstall the Termux application and
-all currently installed plugins. Check https://github.com/termux/termux-app#Installation for more info.
+Installing the API APK alone does not install Shizuku, the CLI wrappers, or Arch.
+The terminal's native Aether/glibc runtime does not need this companion.
 
-## License
+## Setup
 
-Released under the [GPLv3 license](http://www.gnu.org/licenses/gpl-3.0.en.html).
+1. Install [Termux-Æther](https://github.com/wallentx/termux-aether-app), then the APK
+   from a successful [API Build run](https://github.com/wallentx/termux-aether-api/actions/workflows/github_action_build.yml?query=branch%3Adev+event%3Apush).
+   Use matching signing certificates. These builds retain `com.termux.api` and
+   the shared Termux identity, using the public debug test key.
+2. Install the matching [CLI wrappers](https://github.com/wallentx/termux-aether-api-package/tree/dev).
+   Open the API app once, then run `termux-capabilities --json` inside Termux.
+3. For privileged diagnostics, install/start Shizuku and follow
+   [the authorization guide](docs/SHIZUKU.md).
+4. For Arch, follow [guest staging and setup](docs/VIRTUALIZATION.md).
+   The tested Android preview needs the Shizuku-backed AVF bridge; ordinary app
+   permissions alone are not sufficient. Preview framework changes can affect support.
 
-## How API calls are made through the termux-api helper binary
+After the guest and wrappers are set up:
 
-The [termux-api](https://github.com/termux/termux-api-package/blob/master/termux-api.c)
-client binary in the `termux-api` package generates two linux anonymous namespace
-sockets, and passes their address to the [TermuxApiReceiver broadcast receiver](https://github.com/termux/termux-api/blob/master/app/src/main/java/com/termux/api/TermuxApiReceiver.java)
-as in:
-
+```sh
+Æ                              # Open Arch; release RAM when the last session exits
+æ uname -a                     # Run a command and return its exit status
+Æ --keep-memory                # Suspend after use, retaining RAM and processes
+termux-arch-vm --grow-disk 16G   # Grow a stopped guest's disk; preserve its files
+termux-arch-vm --memory-live 6G  # Request a live balloon target within its RAM ceiling
 ```
-/system/bin/am broadcast ${BROADCAST_RECEIVER} --es socket_input ${INPUT_SOCKET} --es socket_output ${OUTPUT_SOCKET}
-```
 
-The two sockets are used to forward stdin from `termux-api` to the relevant API
-class and output from the API class to the stdout of `termux-api`.
+Project sharing uses Termux `rclone` and guest `sshfs`; an active share keeps the
+VM in use. See the [CLI sharing guide](https://github.com/wallentx/termux-aether-api-package/tree/dev#live-project-sharing).
+Live memory adjustment is manual, not automatic pressure-based sizing.
 
-## Client scripts
+## Tested capabilities and limits
 
-Client scripts which processes command line arguments before calling the
-`termux-api` helper binary are available in the [termux-api package](https://github.com/termux/termux-api-package).
+Pixel tests cover persistent guest data, shell/inline commands, session lifetime,
+suspension/resume, network recovery, shared-file read/write access, 6-to-16 GiB disk
+growth, and reclaiming/restoring 2 GiB from an 8 GiB guest without restarting it.
+These are functionality checks, not proof of a speed advantage over PRoot.
+[Terminal performance measurements](https://github.com/wallentx/termux-aether-app/blob/dev/docs/PERFORMANCE.md)
+belong to the main app.
 
-## Ideas
+The guest currently uses a minimal init rather than a normal systemd environment.
+Networking supports outbound IPv4 TCP/UDP; IPv6, raw ICMP, GPU/audio passthrough,
+and protected guest execution are not provided by this setup. Shared directories
+are trusted workspaces with SFTP/SSHFS semantics, not a hostile-code sandbox.
+Keep build trees that require native Unix filesystem behavior on the guest disk.
 
-- Wifi network search and connect.
-- Add extra permissions to the app to (un)install apps, stop processes etc.
+## Documentation and upstream
+
+- [Capability report](docs/CAPABILITIES.md)
+- [Shizuku and thermal diagnostics](docs/SHIZUKU.md)
+- [Virtualization, resources, setup, and validation](docs/VIRTUALIZATION.md)
+- [Original upstream README](README.upstream.md)
+
+This is an independent Termux:API fork. Report its issues
+[here](https://github.com/wallentx/termux-aether-api/issues).
+Licensed under [GPLv3](https://www.gnu.org/licenses/gpl-3.0.html); upstream attribution is retained.
