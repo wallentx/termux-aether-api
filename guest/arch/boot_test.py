@@ -79,10 +79,11 @@ def main():
     with (out / 'ci-console.txt').open('wb') as log:
         for iteration in range(2):
             network_host = network_guest = None
+            # The CI DHCP fixture uses eth0; systemd-udevd would rename this PCI NIC.
             process = subprocess.Popen([
                 'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
                 '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
-                '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_ci=1 termux_epoch={int(time.time())}',
+                '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 net.ifnames=0 termux_ci=1 termux_epoch={int(time.time())}',
                 '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
                 '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
                 '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:2222', '-device', 'virtio-net-pci,netdev=net',
@@ -270,7 +271,7 @@ systemctl is-active --quiet termux-ci-slow-stop.service
     process = subprocess.Popen([
         'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
         '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
-        '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_ci=1 termux_epoch={int(time.time())}',
+        '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 net.ifnames=0 termux_ci=1 termux_epoch={int(time.time())}',
         '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
         '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
         '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:2222', '-device', 'virtio-net-pci,netdev=net',
