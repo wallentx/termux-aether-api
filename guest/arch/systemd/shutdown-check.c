@@ -117,7 +117,10 @@ int main(int argc, char **argv) {
         fputs("TERMUX_ARCH_SHUTDOWN_FAILED: cannot open console\n", stderr);
         return 1;
     }
-    if (argc != 2 || (strcmp(argv[1], "poweroff") != 0
+    /* systemd v262's executor rename clears the saved argv storage backing
+     * its shutdown verb. Accept that observed empty verb only at the normal
+     * arity; the filesystem proof below remains mandatory for every case. */
+    if (argc != 2 || (argv[1][0] != '\0' && strcmp(argv[1], "poweroff") != 0
             && strcmp(argv[1], "halt") != 0 && strcmp(argv[1], "reboot") != 0)) {
         write_all(console, "TERMUX_ARCH_SHUTDOWN_FAILED: unsupported operation\n");
         close(console);

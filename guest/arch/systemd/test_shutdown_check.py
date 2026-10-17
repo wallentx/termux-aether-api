@@ -167,7 +167,7 @@ int main(int argc, char **argv) {
         )
 
     def test_clean_markers_follow_sync_and_second_proof(self):
-        for operation in ("poweroff", "halt", "reboot"):
+        for operation in ("poweroff", "halt", "reboot", ""):
             with self.subTest(operation=operation):
                 result = subprocess.run([str(self.binary), "clean", operation], text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0)
@@ -175,22 +175,25 @@ int main(int argc, char **argv) {
                 self.assertEqual(result.stderr, "sync=1 stat=2\n")
 
     def test_failure_paths_never_emit_clean_markers(self):
-        for scenario in ("rw", "changed", "share", "parse-error", "stat-error", "mounts-error", "console-error"):
-            with self.subTest(scenario=scenario):
-                result = subprocess.run([str(self.binary), scenario, "poweroff"], text=True, capture_output=True)
-                self.assertEqual(result.returncode, 1)
-                self.assertIn("TERMUX_ARCH_SHUTDOWN_FAILED:", result.stdout + result.stderr)
-                self.assertNotIn("TERMUX_ARCH_STOPPING_V2", result.stdout + result.stderr)
-                self.assertNotIn("TERMUX_ARCH_SHARED_UNMOUNTED_V1", result.stdout + result.stderr)
-                expected_counts = "sync=1 stat=2" if scenario == "changed" else (
-                    "sync=0 stat=0" if scenario == "console-error" else "sync=0 stat=1")
-                self.assertIn(expected_counts, result.stderr)
+        for operation in ("poweroff", ""):
+            for scenario in ("rw", "changed", "share", "parse-error", "stat-error", "mounts-error", "console-error"):
+                with self.subTest(operation=operation, scenario=scenario):
+                    result = subprocess.run([str(self.binary), scenario, operation], text=True, capture_output=True)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("TERMUX_ARCH_SHUTDOWN_FAILED:", result.stdout + result.stderr)
+                    self.assertNotIn("TERMUX_ARCH_STOPPING_V2", result.stdout + result.stderr)
+                    self.assertNotIn("TERMUX_ARCH_SHARED_UNMOUNTED_V1", result.stdout + result.stderr)
+                    expected_counts = "sync=1 stat=2" if scenario == "changed" else (
+                        "sync=0 stat=0" if scenario == "console-error" else "sync=0 stat=1")
+                    self.assertIn(expected_counts, result.stderr)
 
     def test_unsupported_operation_fails_before_proof(self):
-        result = subprocess.run([str(self.binary), "clean", "unknown"], text=True, capture_output=True)
-        self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "TERMUX_ARCH_SHUTDOWN_FAILED: unsupported operation\n")
-        self.assertEqual(result.stderr, "sync=0 stat=0\n")
+        for arguments in ([], ["unknown"], ["kexec"], ["exit"], ["poweroff", "extra"], ["", "extra"]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([str(self.binary), "clean", *arguments], text=True, capture_output=True)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "TERMUX_ARCH_SHUTDOWN_FAILED: unsupported operation\n")
+                self.assertEqual(result.stderr, "sync=0 stat=0\n")
 
 
 if __name__ == "__main__":
