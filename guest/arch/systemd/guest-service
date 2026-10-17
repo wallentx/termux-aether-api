@@ -1,0 +1,104 @@
+#!/usr/bin/bash
+# AVF-specific policy; systemd owns PID 1, mounts, supervision, and shutdown.
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+cmdline=$(cat /proc/cmdline)
+has_param() { [[ " $cmdline " == *" $1 "* ]]; }
+
+case "${1:-}" in
+    bootstrap)
+        umask 077
+        for word in $cmdline; do
+            case "$word" in
+                termux_epoch=*)
+                    epoch=${word#termux_epoch=}
+                    [[ $epoch =~ ^[0-9]{10}$ ]] || { echo 'Invalid host clock seed' >&2; exit 1; }
+                    date -u -s "@$epoch"
+                    ;;
+            esac
+        done
+        mkdir -p /root/.ssh
+        key=$(dd if=/dev/vdb bs=4096 count=1 status=none | tr -d '\000')
+        [[ $key =~ ^ssh-ed25519\ [A-Za-z0-9+/]{68}$ ]] || { echo 'Invalid SSH seed' >&2; exit 1; }
+        temporary=$(mktemp /root/.ssh/.authorized_keys.XXXXXX)
+        printf '%s\n' "$key" > "$temporary"
+        chmod 600 "$temporary"
+        mv -f -- "$temporary" /root/.ssh/authorized_keys
+        chmod 700 /root /root/.ssh
+        if [[ ! -e /etc/ssh/ssh_host_ed25519_key ]]; then
+            ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key
+        fi
+        # Persistent per-instance trust, never a private key from the build runner.
+        if [[ ! -e /etc/pacman.d/gnupg/.termux-initialized ]]; then
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+            touch /etc/pacman.d/gnupg/.termux-initialized
+        fi
+        ip link set lo up
+        ;;
+    console)
+        # hvc0 is a fixed control protocol, never a root login shell.
+        stty -echo < /dev/hvc0
+        while true; do
+            if IFS= read -r command; then
+                case "$command" in
+                    poweroff) systemctl --no-block poweroff || true ;;
+                esac
+            else
+                sleep 1
+            fi
+        done
+        ;;
+    sshd)
+        if has_param termux_ci=1; then
+            exec /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux -o ListenAddress=0.0.0.0:2222
+        fi
+        exec /usr/bin/sshd -D -e -f /etc/ssh/sshd_config.termux
+        ;;
+    check-sshd)
+        port=22
+        if has_param termux_ci=1; then port=2222; fi
+        for ((attempt=0; attempt<50; attempt++)); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then exit 0; fi
+            sleep .1
+        done
+        echo 'Guest SSH listener did not become ready' >&2
+        exit 1
+        ;;
+    check-vsock)
+        # Match the existing boot guard; the listener exits on bind/listen failure.
+        sleep .1
+        [[ ${MAINPID:-} =~ ^[0-9]+$ ]]
+        kill -0 "$MAINPID"
+        ;;
+    network)
+        if has_param termux_ci=1; then exec /usr/local/sbin/termux-vm-network eth0; fi
+        exec /usr/local/sbin/termux-vm-network
+        ;;
+    shared-mount)
+        if ! /usr/local/sbin/termux-vm-shared-storage mount; then
+            printf '\nTERMUX_ARCH_SHARED_FAILED_V1\n' > /dev/hvc0
+            exit 1
+        fi
+        ;;
+    shared-unmount)
+        if mountpoint -q /mnt/android; then umount /mnt/android; fi
+        ;;
+    ready)
+        systemctl is-active --quiet termux-vm-sshd.service
+        if ! has_param termux_ci=1; then
+            systemctl is-active --quiet termux-vm-vsock-ssh.service
+        fi
+        # No network-online dependency: the Android backend starts AFTER READY.
+        {
+            printf '\nTERMUX_ARCH_BOOT_V2\n'
+            cat /etc/os-release
+            uname -a
+            printf 'init: '; cat /proc/1/comm
+            printf 'root_mount: '; findmnt -n -o SOURCE,FSTYPE,OPTIONS /
+            printf 'TERMUX_ARCH_HOST_KEY_V2 %s\n' "$(cut -d ' ' -f 1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
+            printf 'TERMUX_ARCH_READY_V2\n'
+        } > /dev/hvc0
+        ;;
+    *) echo 'Unknown AVF service operation' >&2; exit 2 ;;
+esac

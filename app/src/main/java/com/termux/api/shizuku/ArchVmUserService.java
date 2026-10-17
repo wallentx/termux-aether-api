@@ -414,9 +414,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     long deadline = SystemClock.elapsedRealtime() + 12000;
                     while (running.isAlive() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
                 }
-                if (running.isAlive()) {
-                    synchronized (guard) { failure = "shutdown_timeout_guest_left_running"; }
-                } else {
+                // The Binder request has a short budget, but systemd may be
+                // waiting for a service's graceful stop timeout. Return
+                // "stopping" and let the owner loop observe eventual exit;
+                // a request timeout is not evidence of failed guest shutdown.
+                if (!running.isAlive()) {
                     // The idle monitor itself can initiate shutdown; it cannot await itself.
                     if (!"arch-vm-owner".equals(Thread.currentThread().getName()))
                         finished.await(1, TimeUnit.SECONDS);

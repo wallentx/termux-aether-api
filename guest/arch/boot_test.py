@@ -30,6 +30,30 @@ def main():
            '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}',
            '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=5', 'root@127.0.0.1']
     expected_key = None
+    active_ci_units = (
+        'termux-vm-bootstrap.service',
+        'termux-vm-sshd.service',
+        'termux-vm-network.service',
+        'termux-vm-ready.service',
+        'termux-vm-console.service',
+        'termux-vm.target',
+    )
+    masked_stock_units = (
+        'sshd.service',
+        'dhcpcd.service',
+        'systemd-networkd.service',
+        'systemd-networkd-wait-online.service',
+        'systemd-networkd.socket',
+        'systemd-networkd-varlink.socket',
+        'systemd-networkd-varlink-metrics.socket',
+        'systemd-networkd-resolve-hook.socket',
+        'systemd-resolved.service',
+        'systemd-resolved-varlink.socket',
+        'systemd-resolved-monitor.socket',
+        'systemd-timesyncd.service',
+        'serial-getty@hvc0.service',
+        'console-getty.service',
+    )
     # Deterministic repository fixture: test Pacman's real alpm download sandbox
     # without relying on an external mirror or changing the guest's package DB.
     repository = work / 'repository'
@@ -67,7 +91,9 @@ def main():
                 '-device', 'virtconsole,chardev=console', '-display', 'none'],
                 stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
             try:
-                for _ in range(120):
+                # systemd needs time to initialize its journal, then bootstrap
+                # SSH keys and Pacman trust on a fresh root disk.
+                for _ in range(180):
                     text = (out / 'ci-console.txt').read_text(errors='replace')
                     if text.count('TERMUX_ARCH_READY_V2') > iteration:
                         break
@@ -90,6 +116,58 @@ def main():
                     time.sleep(1)
                 else:
                     raise TimeoutError(f'DHCP/SSH not ready: {connected}')
+                unit_check = 'set -eu; test "$(cat /proc/1/comm)" = systemd; '
+                unit_check += ' '.join(
+                    f'systemctl is-active --quiet {unit};' for unit in active_ci_units)
+                unit_check += ' '.join(
+                    f'test "$(systemctl is-enabled {unit} 2>/dev/null || :)" = masked;'
+                    for unit in masked_stock_units)
+                # CI does not expose vsock or a virtio-fs share. Those units must
+                # be skipped, not failed, when their kernel-command-line
+                # conditions are absent.
+                unit_check += ('systemctl is-failed --quiet termux-vm-vsock-ssh.service && exit 1 || :; '
+                               'systemctl is-failed --quiet termux-vm-shared-storage.service && exit 1 || :')
+                result = subprocess.run(ssh + [unit_check], capture_output=True, timeout=30)
+                assert result.returncode == 0, result
+                service_check = b'''set -eu
+cat >/etc/systemd/system/termux-ci-service.service <<'UNIT'
+[Unit]
+Description=CI systemd lifecycle contract
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bash -c 'echo TERMUX_ARCH_CI_SERVICE; exec sleep infinity'
+UNIT
+systemctl daemon-reload
+systemctl start termux-ci-service.service
+systemctl is-active --quiet termux-ci-service.service
+systemctl restart termux-ci-service.service
+systemctl status --no-pager termux-ci-service.service >/dev/null
+journalctl --no-pager -o cat -b -u termux-ci-service.service | grep -qx TERMUX_ARCH_CI_SERVICE
+'''
+                result = subprocess.run(ssh + ['bash', '-s'], input=service_check,
+                                        capture_output=True, timeout=30)
+                assert result.returncode == 0, result
+                if iteration == 0:
+                    slow_stop_check = b'''set -eu
+cat >/etc/systemd/system/termux-ci-slow-stop.service <<'UNIT'
+[Unit]
+Description=CI systemd shutdown timeout contract
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
+ExecStop=/usr/bin/sleep 15
+TimeoutStopSec=30
+UNIT
+systemctl daemon-reload
+systemctl start termux-ci-slow-stop.service
+systemctl is-active --quiet termux-ci-slow-stop.service
+'''
+                    result = subprocess.run(ssh + ['bash', '-s'], input=slow_stop_check,
+                                            capture_output=True, timeout=30)
+                    assert result.returncode == 0, result
                 # Exercise the same packet protocol and guest TAP as production.
                 # SSH replaces AVF vsock only as the CI transport between the two.
                 backend = Path(os.environ['RUNNER_TEMP']) / 'arch-network-host-linux'
@@ -152,17 +230,24 @@ def main():
                                         input=b'', capture_output=True, timeout=20)
                 assert result.returncode == 0, result
                 if iteration == 0:
-                    # A package/script update can unlink files still held by PID 1.
-                    # Shutdown must release them before remount-read-only.
+                    # A package update can unlink files still held by PID 1.
+                    # The shutdown path must still remount cleanly after replacing
+                    # both its manager binary and an ordinary shell binary.
                     result = subprocess.run(ssh + [
-                        'set -eu; cp /usr/local/sbin/termux-vm-init /usr/local/sbin/termux-vm-init.new; '
-                        'mv /usr/local/sbin/termux-vm-init.new /usr/local/sbin/termux-vm-init; '
+                        'set -eu; cp /usr/lib/systemd/systemd /usr/lib/systemd/systemd.new; '
+                        'mv /usr/lib/systemd/systemd.new /usr/lib/systemd/systemd; '
                         'cp /usr/bin/bash /usr/bin/bash.new; mv /usr/bin/bash.new /usr/bin/bash'],
                         capture_output=True, timeout=20)
                     assert result.returncode == 0, result
+                shutdown_started = time.monotonic()
                 process.stdin.write(b'poweroff\n')
                 process.stdin.flush()
-                assert process.wait(timeout=20) == 0
+                assert process.wait(timeout=60) == 0
+                shutdown_elapsed = time.monotonic() - shutdown_started
+                if iteration == 0:
+                    # Android's synchronous stop RPC allows only 12 seconds.
+                    # systemd must be allowed to finish an ordinary longer stop.
+                    assert 14 <= shutdown_elapsed <= 60, shutdown_elapsed
                 text = (out / 'ci-console.txt').read_text(errors='replace')
                 assert text.count('TERMUX_ARCH_STOPPING_V2') == iteration + 1
                 subprocess.run(['e2fsck', '-fn', str(disk)], check=True, timeout=30)
@@ -179,6 +264,34 @@ def main():
                 if process.poll() is None:
                     process.kill()
                     process.wait()
+    # Bootstrap must refuse a malformed host key without advertising readiness.
+    # The console service is independent so a host can still request shutdown.
+    seed.write_bytes(b'not-a-public-key\n'.ljust(4096, b'\0'))
+    process = subprocess.Popen([
+        'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
+        '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
+        '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_ci=1 termux_epoch={int(time.time())}',
+        '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
+        '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
+        '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:2222', '-device', 'virtio-net-pci,netdev=net',
+        '-object', 'rng-random,filename=/dev/urandom,id=rng', '-device', 'virtio-rng-pci,rng=rng',
+        '-device', 'virtio-serial-device', '-chardev', 'stdio,id=console,signal=off',
+        '-device', 'virtconsole,chardev=console', '-display', 'none'],
+        stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+    try:
+        # Let systemd start the console reader, then prove it remains usable even
+        # though bootstrap never reached the ready service.
+        time.sleep(5)
+        process.stdin.write(b'poweroff\n')
+        process.stdin.flush()
+        assert process.wait(timeout=60) == 0
+        text = (out / 'ci-console.txt').read_text(errors='replace')
+        assert text.count('TERMUX_ARCH_READY_V2') == 2, text[-4000:]
+        assert text.count('TERMUX_ARCH_STOPPING_V2') == 2, text[-4000:]
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
     print((out / 'ci-console.txt').read_text(errors='replace'))
     server.shutdown()
     server.server_close()

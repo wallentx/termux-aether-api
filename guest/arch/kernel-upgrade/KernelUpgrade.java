@@ -6,7 +6,7 @@ import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
 import java.util.*;
 
-/** Kernel-only maintenance under the same POSIX record lock as ArchVmUserService. */
+/** Host boot maintenance under the same POSIX record lock as ArchVmUserService. */
 public final class KernelUpgrade {
     static final LinkOption NOFOLLOW = LinkOption.NOFOLLOW_LINKS;
     static final Path BASE = Paths.get("/data/local/tmp/termux-arch-v2");
@@ -75,6 +75,45 @@ public final class KernelUpgrade {
         }
     }
 
+    static String readBootMode(Path base, int uid) throws Exception {
+        validate(base, true, uid);
+        Path path = base.resolve("init-mode");
+        if (Files.notExists(path, NOFOLLOW)) return "systemd";
+        validate(path, false, uid);
+        byte[] content = new byte[9];
+        int length = 0;
+        try (InputStream input = Files.newInputStream(path, NOFOLLOW)) {
+            int next;
+            while (length < content.length && (next = input.read()) != -1)
+                content[length++] = (byte) next;
+        }
+        if (length < 1 || length > 8) throw new IOException("Invalid init-mode size");
+        String value = new String(content, 0, length, "US-ASCII");
+        if (value.equals("systemd") || value.equals("systemd\n")) return "systemd";
+        if (value.equals("legacy") || value.equals("legacy\n")) return "legacy";
+        throw new IOException("Invalid init-mode: expected systemd or legacy");
+    }
+
+    /** Caller owns owner.lock. This operation never opens Image or the guest disk. */
+    static String bootMode(Path base, String requested, int uid) throws Exception {
+        if (!requested.equals("systemd") && !requested.equals("legacy"))
+            throw new IOException("Invalid boot mode: expected systemd or legacy");
+        String before = readBootMode(base, uid);
+        Path pending = base.resolve("init-mode.pending-" + UUID.randomUUID().toString().replace("-", ""));
+        try {
+            writeDurable(pending, requested + "\n");
+            Files.move(pending, base.resolve("init-mode"), StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING);
+            syncDirectory(base);
+        } finally {
+            Files.deleteIfExists(pending);
+        }
+        if (!requested.equals(readBootMode(base, uid))) throw new IOException("Boot mode verification failed");
+        String init = requested.equals("legacy") ? "termux-vm-legacy-init" : "termux-vm-init";
+        return "{\"operation\":\"boot-mode\",\"before_mode\":\"" + before
+                + "\",\"boot_mode\":\"" + requested + "\",\"init_path\":\"/usr/local/sbin/" + init + "\"}";
+    }
+
     static String operate(Path base, Path stage, String mode, String expectedCurrent,
                           String expectedCandidate, String source, int uid) throws Exception {
         validate(base, true, uid);
@@ -85,6 +124,7 @@ public final class KernelUpgrade {
         try (RandomAccessFile file = new RandomAccessFile(owner.toFile(), "rw");
              FileLock lock = file.getChannel().tryLock()) {
             if (lock == null) throw new IOException("Arch is owned; stop it before kernel maintenance");
+            if (mode.equals("boot-mode")) return bootMode(base, source, uid);
             Path current = base.resolve("Image");
             validate(current, false, uid);
             String before = digest(current);

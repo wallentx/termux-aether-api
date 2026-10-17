@@ -239,7 +239,7 @@ policy and internet reachability require Pixel testing. No PRoot speedup is clai
 | Userspace IPv4 bridge; native NIC disabled | Preview crosvm rejects native networking. TCP/UDP use host sockets; IPv6, raw ICMP and multicast are unavailable. Adds a host helper and packet-copy overhead. |
 | Sharing disabled until explicitly configured | `termux-arch-vm --share-enable [ANDROID_FOLDER]` opts into Virtio-FS at `/mnt/android`, defaulting to `Download/AetherShared`. Requires the updated kernel and guest helpers. The mount follows normal VM/session lifetime; `--share-disable` while stopped disables subsequent exports without deleting files. Private Termux directories still use `termux-arch-share` over SSHFS. |
 | DRM, audio, WLAN, Bluetooth, modules disabled | Smaller fixed kernel; enabling guest drivers alone cannot provide host virtual devices or passthrough. Modules need matching installed files on each kernel upgrade. |
-| Minimal Bash PID 1 | Fast shell workspace; normal systemd service management is unavailable. |
+| Systemd PID 1 with AVF units | Normal service management, with dedicated private SSH/vsock, networking, storage and host-control services. Legacy init remains available for recovery. |
 | Password SSH, forwarding, tunnels disabled | Only the device's generated key opens guest sessions. No new guest-to-host forwarding capability. |
 | Non-protected VM | Custom Arch uses host-managed storage and communication. Protected execution and nested virtualization have not been validated. |
 
@@ -258,24 +258,20 @@ The CI artifact includes `guest-update.tar`, `arch-network-host` and dependency
 license notices alongside `Image` and SHA256SUMS.
 Verify checksums first. Keep a backup and save work before stopping the VM.
 
-1. Extract the update payload into a temporary guest directory over authenticated
-   SSH. **Rename** the existing `/usr/local/sbin/termux-vm-init` into a unique
-   backup directory on the same filesystem before installing the new script.
-   Do not merely copy it and overwrite/unlink the original: Bash PID 1 retains
-   the old inode, and an open unlinked inode can prevent ext4 remount-read-only.
-   Retain that backup until after a successful shutdown.
-2. Install `termux-vm-network`, `termux-vm-shutdown` and `termux-vsock-net` under `/usr/local/sbin`,
-   `termux-landlock-check` under `/usr/local/bin`, and `termux-dhcp-hook` under
-   `/usr/local/libexec`, all mode 0755. For the original image's dangling
-   `/etc/resolv.conf -> /run/systemd/resolve/resolv.conf` link, preserve a backup
-   and replace it with `/run/termux-network/resolv.conf`. Preserve custom DNS
-   configuration instead of overwriting it blindly.
-3. Run `termux-arch-vm --stop` and verify `running=false` and
-   `clean_shutdown=true`. Only then replace the host-side kernel with the
-   verified `Image`, retaining the old kernel. Stage `arch-network-host` at
+1. Follow the [systemd migration procedure](../guest/arch/systemd/README.md).
+   A new init script alone is insufficient: its units, helpers, final shutdown
+   checker and host recovery selector must be installed together. Use the
+   verified `guest-update.tar` installer; it saves the prior files and activates
+   the new entrypoint last. Retain the matching API APK and maintenance helper.
+2. Save active guest work and approve the restart. Run `termux-arch-vm --stop`,
+   polling if it reports `stopping`, and require `running=false` with
+   `clean_shutdown=true`. Install the tested API APK while stopped before the
+   first systemd boot so the legacy-init recovery selector is available.
+3. Only if a kernel/network update is also required, replace the host-side kernel
+   with the verified `Image`, retaining the old kernel. Stage `arch-network-host` at
    `/data/local/tmp/termux-arch-v2/arch-network-host`, owned by shell UID 2000,
-   mode 0700. Install any API APK update while stopped. Never replace
-   `arch-rootfs.img` or reset SSH keys.
+   mode 0700. The systemd migration itself does not require a new kernel. Never
+   replace `arch-rootfs.img` or reset SSH keys.
 4. Start the VM and run `guest/arch/network_test.py` from native Termux. It checks
    real Landlock enforcement, address/DNS, HTTPS, sandboxed repository download
    and SSH binding. Its temporary Pacman DB does not update installed packages

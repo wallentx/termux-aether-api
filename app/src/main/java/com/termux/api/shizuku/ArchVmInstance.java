@@ -54,7 +54,8 @@ final class ArchVmInstance {
             customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, ArchVmGraphics.kernel(base, graphicsMode).getPath());
             ArchVmGraphics.configure(custom, graphicsMode);
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
-                    "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
+                    "console=hvc0 root=/dev/vda ro rootwait init=" + ArchVmBootMode.initPath(base)
+                            + " panic=-1 termux_epoch="
                             + (System.currentTimeMillis() / 1000));
             if (sharedPath != null) {
                 ArchVmSharedStorage.validateDirectory(sharedPath);

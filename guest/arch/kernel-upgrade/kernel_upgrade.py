@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upgrade only the Arch AVF kernel, preserving its disk and a verified rollback copy."""
+"""Maintain the Arch AVF kernel or select its recovery init without changing the disk."""
 import argparse
 import hashlib
 import importlib.util
@@ -29,11 +29,12 @@ def verify_artifact(root, commit):
     return expected["Image"]
 
 
-def require_stopped(status, *, rollback=False):
-    states = ("stopped", "error") if rollback else ("stopped",)
+def require_stopped(status, *, rollback=False, recovery=False):
+    allow_unclean = rollback or recovery
+    states = ("stopped", "error") if allow_unclean else ("stopped",)
     if (status.get("status") not in states or status.get("running") is not False
             or status.get("active_sessions") != 0
-            or (not rollback and status.get("clean_shutdown") is not True)):
+            or (not allow_unclean and status.get("clean_shutdown") is not True)):
         raise RuntimeError("Arch must be stopped with no sessions (new installs also require clean shutdown); "
                            "use termux-arch-vm --stop first")
 
@@ -53,7 +54,7 @@ def sha(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--helper", type=Path, required=True, help="Trusted kernel-upgrade.jar built from this source")
     sub = parser.add_subparsers(dest="operation", required=True)
@@ -63,14 +64,16 @@ def main():
     install.add_argument("--commit", required=True, help="Exact source commit of the successful CI run")
     rollback = sub.add_parser("rollback", help="Restore a saved kernel; retain the current one too")
     rollback.add_argument("backup", help="32-character backup ID printed by install")
-    args = parser.parse_args()
+    boot_mode = sub.add_parser("boot-mode", help="Select the next boot's init without guest SSH")
+    boot_mode.add_argument("--mode", choices=("systemd", "legacy"), required=True)
+    args = parser.parse_args(argv)
     if not args.helper.is_file() or args.helper.is_symlink():
         parser.error("Helper must be a trusted regular jar file")
     candidate = verify_artifact(args.artifact, args.commit) if args.operation == "install" else "-"
     if args.operation == "rollback" and not re.fullmatch(r"[0-9a-f]{32}", args.backup):
         parser.error("Invalid backup ID")
     if args.operation != "inspect":
-        require_stopped(status(), rollback=args.operation == "rollback")
+        require_stopped(status(), rollback=args.operation == "rollback", recovery=args.operation == "boot-mode")
     token = uuid.uuid4().hex
     public = Path("/storage/emulated/0/Download") / f"aether-kernel-{token}"
     stage = f"/data/local/tmp/aether-kernel-{token}"
@@ -111,19 +114,26 @@ def main():
             (state / f"{operation}.json").write_text(json.dumps(value, indent=2) + "\n")
             return value
 
-        before = invoke("inspect")
-        if args.operation == "inspect":
-            report.update(before)
-        else:
-            # Status is a precondition; the service's owner.lock closes the start/upgrade race.
-            require_stopped(status(), rollback=args.operation == "rollback")
-            source = args.commit if args.operation == "install" else args.backup
-            changed = invoke(args.operation, before["image_sha256"], candidate, source)
-            for key in ("disk_inode", "disk_device", "disk_bytes"):
-                if before[key] != changed[key]:
-                    raise RuntimeError("Disk identity changed unexpectedly")
-            report.update(changed)
+        if args.operation == "boot-mode":
+            # Recovery must also work without a readable/bootable Image or guest disk.
+            # The helper locks owner.lock, then touches only the host init-mode file.
+            require_stopped(status(), recovery=True)
+            report.update(invoke("boot-mode", source=args.mode))
             report["boot_verified"] = False
+        else:
+            before = invoke("inspect")
+            if args.operation == "inspect":
+                report.update(before)
+            else:
+                # Status is a precondition; the service's owner.lock closes the start/upgrade race.
+                require_stopped(status(), rollback=args.operation == "rollback")
+                source = args.commit if args.operation == "install" else args.backup
+                changed = invoke(args.operation, before["image_sha256"], candidate, source)
+                for key in ("disk_inode", "disk_device", "disk_bytes"):
+                    if before[key] != changed[key]:
+                        raise RuntimeError("Disk identity changed unexpectedly")
+                report.update(changed)
+                report["boot_verified"] = False
         report["status"] = "passed"
         success = True
     except Exception as error:

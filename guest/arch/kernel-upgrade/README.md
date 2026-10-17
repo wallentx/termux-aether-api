@@ -1,4 +1,4 @@
-# Reversible Arch kernel upgrade
+# Reversible Arch kernel upgrade and boot recovery
 
 This developer tool replaces only the host-side `Image` used by the existing
 Arch VM. It requires authorized shell Shizuku (`rish`), a cleanly stopped guest,
@@ -45,6 +45,45 @@ shutdown passed on 2026-09-22 UTC. See [device evidence](../../../docs/validatio
 Each invocation normally takes a few seconds, with a 90-second shell timeout.
 This is a source-checkout maintenance tool; it is not yet installed by the
 API package or invoked automatically by `Æ`/`æ`.
+
+## Select systemd or legacy recovery init
+
+With the API build that supports boot mode installed, the next boot can use the
+legacy init even when systemd fails before SSH becomes available. The guest must
+contain `/usr/local/sbin/termux-vm-legacy-init` (included by the systemd migration).
+Run this from Android/Termux after the VM has stopped and all sessions are closed:
+
+```sh
+python guest/arch/kernel-upgrade/kernel_upgrade.py \
+  --helper /private/path/kernel-upgrade.jar boot-mode --mode legacy
+termux-arch --user root -- id -un
+```
+
+The helper writes only the private host file
+`/data/local/tmp/termux-arch-v2/init-mode` under the existing VM `owner.lock`.
+It does not open or modify the guest disk or `Image`, does not require guest SSH,
+and never changes a live VM. A failed boot with `clean_shutdown=false` is allowed
+only when `running=false`, status is `stopped` or `error`, no sessions remain,
+and the owner lock is available. The helper does not force-stop the guest.
+
+After repairing the guest and stopping it, select the normal boot again:
+
+```sh
+python guest/arch/kernel-upgrade/kernel_upgrade.py \
+  --helper /private/path/kernel-upgrade.jar boot-mode --mode systemd
+```
+
+| Host mode | Kernel init path |
+| --- | --- |
+| `systemd` or absent file | `/usr/local/sbin/termux-vm-init` |
+| `legacy` | `/usr/local/sbin/termux-vm-legacy-init` |
+
+`systemd` keeps the original init path, so a guest that has not yet been migrated
+continues to use its existing script. Other values and unsafe mode-file paths
+fail closed. The file is atomically replaced with permissions `0600`; the
+operation reports the previous and new modes with `boot_verified=false` until
+the next boot is verified separately. This requires a helper built from the
+updated source as well as the API build; older builds do not implement the selector.
 
 ## Rollback
 

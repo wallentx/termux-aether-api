@@ -36,6 +36,69 @@ public final class KernelUpgradeTest {
             String before = KernelUpgrade.digest(base.resolve("Image"));
             String after = KernelUpgrade.digest(stage.resolve("Image"));
             String commit = "0123456789012345678901234567890123456789";
+            Object imageInode = Files.getAttribute(base.resolve("Image"), "unix:ino");
+            Object ownerInode = Files.getAttribute(base.resolve("owner.lock"), "unix:ino");
+            Path selectedMode = base.resolve("init-mode");
+            check(KernelUpgrade.readBootMode(base, uid).equals("systemd"));
+            rejects(() -> KernelUpgrade.readBootMode(base, uid + 1));
+            for (String value : new String[]{"legacy", "legacy\n", "systemd", "systemd\n"}) {
+                privateFile(selectedMode, value.getBytes("US-ASCII"));
+                check(KernelUpgrade.readBootMode(base, uid).equals(value.trim()));
+            }
+            for (String bad : new String[]{"", "legacy quiet", "init=/bin/sh", "LEGACY", " legacy",
+                    "legacy\r\n", "legacy\n\n", "legacy\0", "legacy\u00e9"}) {
+                privateFile(selectedMode, bad.getBytes("UTF-8"));
+                rejects(() -> KernelUpgrade.readBootMode(base, uid));
+                rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            }
+            Files.delete(selectedMode);
+            String recovery = KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid);
+            check(recovery.contains("\"before_mode\":\"systemd\""));
+            check(recovery.contains("\"boot_mode\":\"legacy\""));
+            check(recovery.contains("/usr/local/sbin/termux-vm-legacy-init"));
+            check(Files.getPosixFilePermissions(selectedMode).equals(PosixFilePermissions.fromString("rw-------")));
+            check(KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "systemd", uid)
+                    .contains("\"init_path\":\"/usr/local/sbin/termux-vm-init\""));
+            for (String bad : new String[]{"", "legacy\n", "init=/bin/sh", "Legacy", "systemd quiet"})
+                rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", bad, uid));
+            try (RandomAccessFile owner = new RandomAccessFile(base.resolve("owner.lock").toFile(), "rw");
+                 FileLock lock = owner.getChannel().lock()) {
+                rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            }
+            check(KernelUpgrade.readBootMode(base, uid).equals("systemd"));
+            Files.setPosixFilePermissions(selectedMode, PosixFilePermissions.fromString("rw-r--r--"));
+            rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            Files.delete(selectedMode);
+            Files.createSymbolicLink(selectedMode, base.resolve("missing"));
+            rejects(() -> KernelUpgrade.readBootMode(base, uid));
+            rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            Files.delete(selectedMode);
+            privateFile(base.resolve("saved-init-mode"), "systemd\n".getBytes("US-ASCII"));
+            Files.createSymbolicLink(selectedMode, base.resolve("saved-init-mode"));
+            rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            Files.delete(selectedMode);
+            try {
+                Files.createLink(selectedMode, base.resolve("saved-init-mode"));
+                rejects(() -> KernelUpgrade.readBootMode(base, uid));
+                rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+                Files.delete(selectedMode);
+            } catch (AccessDeniedException | UnsupportedOperationException unavailable) {
+                System.out.println("SKIP: host filesystem denies hardlink creation");
+            }
+            Files.createDirectory(selectedMode);
+            rejects(() -> KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid));
+            Files.delete(selectedMode);
+            // Recovery selects init even when the artifacts cannot be opened.
+            Files.move(base.resolve("Image"), base.resolve("Image.unavailable"));
+            Files.move(base.resolve("arch-rootfs.img"), base.resolve("disk.unavailable"));
+            KernelUpgrade.operate(base, stage, "boot-mode", "-", "-", "legacy", uid);
+            Files.move(base.resolve("Image.unavailable"), base.resolve("Image"));
+            Files.move(base.resolve("disk.unavailable"), base.resolve("arch-rootfs.img"));
+            check(Arrays.equals(old, Files.readAllBytes(base.resolve("Image"))));
+            check(Arrays.equals(disk, Files.readAllBytes(base.resolve("arch-rootfs.img"))));
+            check(imageInode.equals(Files.getAttribute(base.resolve("Image"), "unix:ino")));
+            check(diskInode.equals(Files.getAttribute(base.resolve("arch-rootfs.img"), "unix:ino")));
+            check(ownerInode.equals(Files.getAttribute(base.resolve("owner.lock"), "unix:ino")));
             Checked install = () -> KernelUpgrade.operate(base, stage, "install", before, after, commit, uid);
             rejects(() -> KernelUpgrade.operate(base, stage, "install", after, after, commit, uid));
             rejects(() -> KernelUpgrade.operate(base, stage, "install", before, before, commit, uid));

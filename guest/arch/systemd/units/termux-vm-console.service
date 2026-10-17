@@ -1,0 +1,18 @@
+[Unit]
+Description=AVF fixed console poweroff control
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/termux-vm-systemd console
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal+console
+TTYPath=/dev/hvc0
+TTYReset=no
+TTYVHangup=no
+Restart=on-failure
+RestartSec=1
