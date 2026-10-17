@@ -14,6 +14,52 @@ import threading
 import time
 
 
+def check_malformed_seed_boot(out, disk, seed):
+    """Prove auth rejection still permits a clean console-requested shutdown."""
+    console = out / 'ci-console.txt'
+    previous = console.read_text(errors='replace')
+    ready_count = previous.count('TERMUX_ARCH_READY_V2')
+    stopping_count = previous.count('TERMUX_ARCH_STOPPING_V2')
+    error_count = previous.count('Invalid SSH seed')
+    seed.write_bytes(b'not-a-public-key\n'.ljust(4096, b'\0'))
+    with console.open('ab') as log:
+        process = subprocess.Popen([
+            'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
+            '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
+            '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 net.ifnames=0 termux_ci=1 termux_epoch={int(time.time())}',
+            '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
+            '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
+            '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:2222', '-device', 'virtio-net-pci,netdev=net',
+            '-object', 'rng-random,filename=/dev/urandom,id=rng', '-device', 'virtio-rng-pci,rng=rng',
+            '-device', 'virtio-serial-device', '-chardev', 'stdio,id=console,signal=off',
+            '-device', 'virtconsole,chardev=console', '-display', 'none'],
+            stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            # Bootstrap reports its rejection on the console after systemd's
+            # device discovery. Startup and shutdown need separate deadlines.
+            for _ in range(180):
+                text = console.read_text(errors='replace')
+                assert text.count('TERMUX_ARCH_READY_V2') == ready_count, text[-4000:]
+                if process.poll() is not None:
+                    raise RuntimeError('Malformed-key guest exited before shutdown request')
+                if text.count('Invalid SSH seed') > error_count:
+                    break
+                time.sleep(1)
+            else:
+                raise TimeoutError('Guest did not reject the malformed SSH seed')
+            process.stdin.write(b'poweroff\n')
+            process.stdin.flush()
+            assert process.wait(timeout=60) == 0
+            text = console.read_text(errors='replace')
+            assert text.count('TERMUX_ARCH_READY_V2') == ready_count, text[-4000:]
+            assert text.count('TERMUX_ARCH_STOPPING_V2') == stopping_count + 1, text[-4000:]
+            subprocess.run(['e2fsck', '-fn', str(disk)], check=True, timeout=30)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
+
 def main():
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise SystemExit('Run guest builds and boot tests in CI.')
@@ -265,34 +311,7 @@ systemctl is-active --quiet termux-ci-slow-stop.service
                 if process.poll() is None:
                     process.kill()
                     process.wait()
-    # Bootstrap must refuse a malformed host key without advertising readiness.
-    # The console service is independent so a host can still request shutdown.
-    seed.write_bytes(b'not-a-public-key\n'.ljust(4096, b'\0'))
-    process = subprocess.Popen([
-        'qemu-system-aarch64', '-machine', 'virt', '-cpu', 'max', '-m', '1024',
-        '-nodefaults', '-no-reboot', '-kernel', str(out / 'Image'),
-        '-append', f'console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 net.ifnames=0 termux_ci=1 termux_epoch={int(time.time())}',
-        '-drive', f'file={disk},format=raw,if=none,id=root', '-device', 'virtio-blk-pci,drive=root',
-        '-drive', f'file={seed},format=raw,if=none,id=seed,readonly=on', '-device', 'virtio-blk-pci,drive=seed',
-        '-netdev', 'user,id=net,hostfwd=tcp:127.0.0.1:22222-:2222', '-device', 'virtio-net-pci,netdev=net',
-        '-object', 'rng-random,filename=/dev/urandom,id=rng', '-device', 'virtio-rng-pci,rng=rng',
-        '-device', 'virtio-serial-device', '-chardev', 'stdio,id=console,signal=off',
-        '-device', 'virtconsole,chardev=console', '-display', 'none'],
-        stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
-    try:
-        # Let systemd start the console reader, then prove it remains usable even
-        # though bootstrap never reached the ready service.
-        time.sleep(5)
-        process.stdin.write(b'poweroff\n')
-        process.stdin.flush()
-        assert process.wait(timeout=60) == 0
-        text = (out / 'ci-console.txt').read_text(errors='replace')
-        assert text.count('TERMUX_ARCH_READY_V2') == 2, text[-4000:]
-        assert text.count('TERMUX_ARCH_STOPPING_V2') == 2, text[-4000:]
-    finally:
-        if process.poll() is None:
-            process.kill()
-            process.wait()
+    check_malformed_seed_boot(out, disk, seed)
     print((out / 'ci-console.txt').read_text(errors='replace'))
     server.shutdown()
     server.server_close()
