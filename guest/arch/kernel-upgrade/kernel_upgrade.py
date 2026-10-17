@@ -54,6 +54,12 @@ def sha(path):
         return hashlib.file_digest(source, "sha256").hexdigest()
 
 
+def shared_downloads():
+    # Aether can broker this alias even when direct /storage paths are denied.
+    alias = Path.home() / "storage/downloads"
+    return alias if alias.is_dir() else Path("/storage/emulated/0/Download")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--helper", type=Path, required=True, help="Trusted kernel-upgrade.jar built from this source")
@@ -75,13 +81,15 @@ def main(argv=None):
     if args.operation != "inspect":
         require_stopped(status(), rollback=args.operation == "rollback", recovery=args.operation == "boot-mode")
     token = uuid.uuid4().hex
-    public = Path("/storage/emulated/0/Download") / f"aether-kernel-{token}"
+    public = shared_downloads() / f"aether-kernel-{token}"
     stage = f"/data/local/tmp/aether-kernel-{token}"
     state = Path.home() / ".local/state/termux-aether" / f"kernel-{token}"
     state.mkdir(parents=True, mode=0o700)
     public.mkdir()
+    # Shell UID uses the canonical storage path; app UID keeps using its alias.
+    shell_public = public.resolve()
     report = {"status": "failed", "operation": args.operation, "state": str(state),
-              "stage": stage, "public": str(public)}
+              "stage": stage, "public": str(public), "shell_public": str(shell_public)}
     success = False
     try:
         inputs = {"kernel-upgrade.jar": args.helper}
@@ -92,7 +100,7 @@ def main(argv=None):
             raise ValueError("Artifact changed after verification")
         for name, path in inputs.items():
             shutil.copyfile(path, public / name)
-        copies = " && ".join(f"cp {shlex.quote(str(public / name))} {stage}/{name}" for name in inputs)
+        copies = " && ".join(f"cp {shlex.quote(str(shell_public / name))} {stage}/{name}" for name in inputs)
         checksums = "".join(f"{digest}  {name}\n" for name, digest in expected.items())
         check = f"printf '%s' {shlex.quote(checksums)} | sha256sum -c - > integrity.txt"
         shell(f"umask 077 && mkdir {stage} && {copies} && cd {stage} && {check} && chmod 0444 kernel-upgrade.jar")
@@ -104,9 +112,9 @@ def main(argv=None):
                   f"CLASSPATH={stage}/kernel-upgrade.jar app_process /system/bin KernelUpgrade {arguments} "
                   f"> {stage}/{operation}.log 2>&1; upgrade_rc=$?; "
                   f"printf '%s\\n' \"$upgrade_rc\" > {stage}/exit.txt; "
-                  f"cp {stage}/exit.txt {shlex.quote(str(public))}/exit.txt; "
-                  f"cp {stage}/{operation}.log {shlex.quote(str(public))}/{operation}.log; "
-                  f"if [ -f {stage}/result.json ]; then cp {stage}/result.json {shlex.quote(str(public))}/result.json; fi")
+                  f"cp {stage}/exit.txt {shlex.quote(str(shell_public))}/exit.txt; "
+                  f"cp {stage}/{operation}.log {shlex.quote(str(shell_public))}/{operation}.log; "
+                  f"if [ -f {stage}/result.json ]; then cp {stage}/result.json {shlex.quote(str(shell_public))}/result.json; fi")
             shutil.copyfile(public / f"{operation}.log", state / f"{operation}.log")
             if (public / "exit.txt").read_text().strip() != "0":
                 raise RuntimeError(f"Kernel {operation} failed; see {state / (operation + '.log')}")

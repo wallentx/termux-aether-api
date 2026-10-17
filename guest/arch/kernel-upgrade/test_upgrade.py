@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-from kernel_upgrade import main, require_stopped, verify_artifact
+from kernel_upgrade import main, require_stopped, shared_downloads, verify_artifact
 from pathlib import Path
 import contextlib
 import io
@@ -11,6 +11,18 @@ from types import SimpleNamespace
 
 
 class Guards(unittest.TestCase):
+    def test_shared_downloads_retains_app_alias_instead_of_resolving_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            actual = root / 'real-downloads'
+            actual.mkdir()
+            alias = root / 'storage/downloads'
+            alias.parent.mkdir()
+            alias.symlink_to(actual)
+            with patch('kernel_upgrade.Path.home', return_value=root):
+                self.assertEqual(alias, shared_downloads())
+                self.assertNotEqual(actual, shared_downloads())
+
     def test_only_clean_stopped_guest(self):
         valid = {"status": "stopped", "running": False, "clean_shutdown": True, "active_sessions": 0}
         require_stopped(valid)
@@ -71,11 +83,15 @@ class Guards(unittest.TestCase):
             helper.write_bytes(b"trusted test helper")
             download = root / "Download"
             download.mkdir()
+            alias = root / "storage/downloads"
+            alias.parent.mkdir()
+            alias.symlink_to(download)
             token = "a" * 32
             public = download / ("aether-kernel-" + token)
             invocations = []
 
             def shell(command):
+                self.assertNotIn(str(alias), command, 'Shell must use the resolved shared-storage path')
                 if "app_process /system/bin KernelUpgrade " not in command:
                     return
                 arguments = shlex.split(command)
@@ -107,6 +123,8 @@ class Guards(unittest.TestCase):
             self.assertEqual("passed", result["status"])
             self.assertEqual("legacy", result["boot_mode"])
             self.assertFalse(result["boot_verified"])
+            self.assertEqual(str(alias / ("aether-kernel-" + token)), result["public"])
+            self.assertEqual(str(public), result["shell_public"])
 
 
 if __name__ == "__main__":
