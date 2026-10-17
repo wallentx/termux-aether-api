@@ -5,6 +5,13 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
 cmdline=$(cat /proc/cmdline)
 has_param() { [[ " $cmdline " == *" $1 "* ]]; }
 
+seeded_epoch() {
+    local epoch=${1:-} uptime=${2:-}
+    [[ $epoch =~ ^[0-9]{10}$ ]] || { echo 'Invalid host clock seed' >&2; return 1; }
+    [[ $uptime =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo 'Invalid guest uptime' >&2; return 1; }
+    printf '%s\n' "$((10#$epoch + 10#${uptime%%.*}))"
+}
+
 case "${1:-}" in
     bootstrap)
         umask 077
@@ -12,8 +19,10 @@ case "${1:-}" in
             case "$word" in
                 termux_epoch=*)
                     epoch=${word#termux_epoch=}
-                    [[ $epoch =~ ^[0-9]{10}$ ]] || { echo 'Invalid host clock seed' >&2; exit 1; }
-                    date -u -s "@$epoch"
+                    # The host seeds at VM launch; bootstrap may run much later.
+                    read -r uptime _ < /proc/uptime
+                    now=$(seeded_epoch "$epoch" "$uptime")
+                    date -u -s "@$now"
                     ;;
             esac
         done
