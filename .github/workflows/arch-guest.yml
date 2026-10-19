@@ -2,10 +2,10 @@ name: Arch AVF guest
 on:
   push:
     branches: ['dev', 'wallentx/**']
-    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/dhcp_hook_test.py', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
+    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/legacy-init', 'guest/arch/systemd/**', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/dhcp_hook_test.py', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/shared-storage', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
   pull_request:
     branches: [master, dev]
-    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/dhcp_hook_test.py', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
+    paths: ['guest/arch/build.sh', 'guest/arch/init', 'guest/arch/legacy-init', 'guest/arch/systemd/**', 'guest/arch/kernel.config', 'guest/arch/sshd_config', 'guest/arch/vsock-ssh.c', 'guest/arch/boot_test.py', 'guest/arch/network', 'guest/arch/dhcp-hook', 'guest/arch/dhcp_hook_test.py', 'guest/arch/landlock-check.c', 'guest/arch/shutdown.c', 'guest/arch/shared-storage', 'guest/arch/vsock-net.c', 'guest/arch/network-host/**', '.github/workflows/arch-guest.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -25,6 +25,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test DHCP resolver failover
         run: python3 guest/arch/dhcp_hook_test.py
+      - name: Validate systemd boot and shutdown contracts
+        run: |
+          bash -n guest/arch/init guest/arch/legacy-init guest/arch/systemd/guest-service guest/arch/systemd/install.sh
+          python3 -B -m unittest discover -s guest/arch/systemd -p 'test_*.py'
       - name: Install guest build tools
         run: |
           sudo apt-get update -qq
@@ -68,6 +72,16 @@ jobs:
           python3 licenses.py > "$GITHUB_WORKSPACE/guest-out/network-host-LICENSES.txt"
       - name: Build and boot networked Arch guest
         run: bash guest/arch/build.sh rootfs
+      - name: Upload small in-place systemd update
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-systemd-update-${{ github.sha }}
+          path: |
+            guest-out/guest-update.tar
+            guest-out/provenance.txt
+            guest-out/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: arch-avf-${{ github.sha }}

@@ -1,0 +1,13 @@
+[Unit]
+Description=Initialize AVF guest authorization, clock and package trust
+Requires=dev-vdb.device
+After=local-fs.target dev-vdb.device
+Before=termux-vm-sshd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/termux-vm-systemd bootstrap
+TimeoutStartSec=90
+StandardOutput=journal+console
+StandardError=journal+console

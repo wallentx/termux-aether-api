@@ -1,0 +1,2 @@
+Linux termux-arch-v2 6.18.52-termux-avf #1 SMP PREEMPT Tue Sep 22 03:24:22 UTC 2026 aarch64 GNU/Linux
+nodev	virtiofs

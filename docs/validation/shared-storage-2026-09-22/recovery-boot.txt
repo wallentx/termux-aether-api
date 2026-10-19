@@ -1,0 +1,1 @@
+aether_shared virtiofs rw,nosuid,nodev,noexec,relatime

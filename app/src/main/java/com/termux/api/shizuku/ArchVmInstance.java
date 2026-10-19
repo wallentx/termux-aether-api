@@ -21,10 +21,11 @@ final class ArchVmInstance {
     private final Class<?> vmInterface;
     private final int deadState;
     private final int notStartedState;
+    private final boolean balloonAvailable;
     final InputStream console;
     final OutputStream input;
 
-    ArchVmInstance(Context context, File base, long memoryBytes) throws Exception {
+    ArchVmInstance(Context context, File base, long memoryBytes, String sharedPath, String graphicsMode) throws Exception {
         Class<?> platform = Class.forName("android.system.virtualmachine.VirtualizationService");
         Method instance = platform.getDeclaredMethod("getInstance");
         instance.setAccessible(true);
@@ -50,10 +51,24 @@ final class ArchVmInstance {
             Class<?> diskType = Class.forName(customType.getName() + "$Disk");
             Object custom = customBuilderType.getConstructor().newInstance();
             customBuilderType.getMethod("setName", String.class).invoke(custom, "termux-arch-v2");
-            customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, new File(base, "Image").getPath());
+            customBuilderType.getMethod("setKernelPath", String.class).invoke(custom, ArchVmGraphics.kernel(base, graphicsMode).getPath());
+            ArchVmGraphics.configure(custom, graphicsMode);
             customBuilderType.getMethod("addParam", String.class).invoke(custom,
-                    "console=hvc0 root=/dev/vda ro rootwait init=/usr/local/sbin/termux-vm-init panic=-1 termux_epoch="
+                    "console=hvc0 root=/dev/vda ro rootwait init=" + ArchVmBootMode.initPath(base)
+                            + " panic=-1 termux_epoch="
                             + (System.currentTimeMillis() / 1000));
+            if (sharedPath != null) {
+                ArchVmSharedStorage.validateDirectory(sharedPath);
+                customBuilderType.getMethod("addParam", String.class).invoke(custom, "termux_shared_storage=1");
+                Class<?> sharedType = Class.forName(customType.getName() + "$SharedPath");
+                // Verified on CP41.260828.004.A8: arg 8 maps to the service's
+                // socket basename. The service owns the backend and its lifetime.
+                Object shared = sharedType.getConstructor(String.class, int.class, int.class,
+                        int.class, int.class, int.class, String.class, String.class, String.class)
+                        .newInstance(sharedPath, 2000, 2000, 0, 0, 0, ArchVmSharedStorage.TAG,
+                                "fs.sock", new File(base, "unused-fs.sock").getPath());
+                customBuilderType.getMethod("addSharedPath", sharedType).invoke(custom, shared);
+            }
             // Pixel's current preview virtmgr emits --net, but its crosvm rejects
             // that option before boot. Keep native NIC off until the host is fixed.
             customBuilderType.getMethod("useNetwork", boolean.class).invoke(custom, false);
@@ -90,6 +105,8 @@ final class ArchVmInstance {
             vm = serviceInterface.getMethod("createVm", configType, ParcelFileDescriptor.class,
                     ParcelFileDescriptor.class, ParcelFileDescriptor.class, ParcelFileDescriptor.class)
                     .invoke(service, config, outputPipe[1], inputPipe[0], null, null);
+            // Configuration capability only; never poll guest statistics for status.
+            balloonAvailable = (Boolean) vmInterface.getMethod("isMemoryBalloonEnabled").invoke(vm);
             console = new ParcelFileDescriptor.AutoCloseInputStream(outputPipe[0]);
             input = new ParcelFileDescriptor.AutoCloseOutputStream(inputPipe[1]);
             success = true;
@@ -109,12 +126,7 @@ final class ArchVmInstance {
     }
     void suspend() throws Exception { vmInterface.getMethod("suspend").invoke(vm); }
     void resume() throws Exception { vmInterface.getMethod("resume").invoke(vm); }
-    boolean balloonEnabled() throws Exception {
-        return (Boolean)vmInterface.getMethod("isMemoryBalloonEnabled").invoke(vm);
-    }
-    long balloonBytes() throws Exception {
-        return (Long)vmInterface.getMethod("getActualMemoryBalloonBytes").invoke(vm);
-    }
+    boolean balloonEnabled() { return balloonAvailable; }
     void balloon(long bytes) throws Exception {
         vmInterface.getMethod("setMemoryBalloon", long.class).invoke(vm, bytes);
     }

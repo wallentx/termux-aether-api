@@ -8,4 +8,6 @@ interface IArchVmService {
     String resizeMemory(int retainedMiB) = 6;
     String growDisk(long bytes) = 7;
     String session(String operation, String token, boolean keepMemory) = 5;
+    String configureSharedStorage(String path) = 8;
+    String startWithGraphics(String publicKey, int memoryMiB, String graphicsMode) = 9;
 }

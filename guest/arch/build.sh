@@ -21,7 +21,7 @@ cd "linux-$kernel_version"
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
 scripts/kconfig/merge_config.sh -m .config "$source_dir/kernel.config"
 make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-for option in VIRTIO_PCI VIRTIO_MMIO VIRTIO_BLK VIRTIO_CONSOLE EXT4_FS DEVTMPFS_MOUNT MAGIC_SYSRQ SECURITY_LANDLOCK; do
+for option in VIRTIO_PCI VIRTIO_MMIO VIRTIO_BLK VIRTIO_CONSOLE EXT4_FS FUSE_FS VIRTIO_FS BLK_DEV_INITRD RD_GZIP DEVTMPFS_MOUNT MAGIC_SYSRQ SECURITY_LANDLOCK; do
     grep -qx "CONFIG_$option=y" .config
 done
 grep -Eq '^CONFIG_LSM="([^" ]*,)?landlock(,[^" ]*)?"$' .config
@@ -40,6 +40,7 @@ sha256sum arch.tar.gz > "$out/rootfs-source.sha256"
 printf 'source=%s\nkernel=%s\ncommit=%s\n' "$arch_url" "$kernel_version" "$GITHUB_SHA" > "$out/provenance.txt"
 sudo bsdtar -xpf arch.tar.gz -C root
 sudo install -m 755 "$source_dir/init" root/usr/local/sbin/termux-vm-init
+sudo install -m 755 "$source_dir/shared-storage" root/usr/local/sbin/termux-vm-shared-storage
 sudo install -m 755 "$source_dir/network" root/usr/local/sbin/termux-vm-network
 sudo install -D -m 755 "$source_dir/dhcp-hook" root/usr/local/libexec/termux-dhcp-hook
 sudo ln -sfn /run/termux-network/resolv.conf root/etc/resolv.conf
@@ -47,6 +48,9 @@ sudo ln -sfn /run/termux-network/resolv.conf root/etc/resolv.conf
 # hash keeps the account usable for public-key SSH with UsePAM=no.
 sudo sed -i -E 's/^root:[^:]*:/root:*:/; s/^alarm:[^:]*:/alarm:!:/' root/etc/shadow
 sudo rm -f root/etc/ssh/ssh_host_* root/root/.ssh/authorized_keys
+# New images acquire their own systemd/D-Bus identity on first boot.
+sudo truncate -s 0 root/etc/machine-id
+sudo rm -f root/var/lib/dbus/machine-id
 sudo test -x root/usr/bin/sshd
 sudo test -x root/usr/bin/ip
 sudo test -x root/usr/bin/dhcpcd
@@ -57,16 +61,30 @@ aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/landlock-ch
 sudo install -m 755 landlock-check root/usr/local/bin/termux-landlock-check
 aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/shutdown.c" -o vm-shutdown
 sudo install -m 755 vm-shutdown root/usr/local/sbin/termux-vm-shutdown
+aarch64-linux-gnu-gcc -static -O2 -std=c11 -Wall -Wextra -Werror \
+    "$source_dir/systemd/shutdown-check.c" -o termux-vm-check
 aarch64-linux-gnu-gcc -static -O2 -Wall -Wextra -Werror "$source_dir/vsock-net.c" -o vsock-net
 sudo install -m 755 vsock-net root/usr/local/sbin/termux-vsock-net
 # Small update payload for existing guests: never replace their writable disk.
 mkdir -p update
 install -m 755 "$source_dir/init" update/termux-vm-init
+install -m 755 "$source_dir/legacy-init" update/termux-vm-legacy-init
+install -m 755 "$source_dir/systemd/guest-service" update/termux-vm-systemd
+install -m 755 "$source_dir/shared-storage" update/termux-vm-shared-storage
 install -m 755 "$source_dir/network" update/termux-vm-network
 install -m 755 "$source_dir/dhcp-hook" update/termux-dhcp-hook
 install -m 755 landlock-check update/termux-landlock-check
 install -m 755 vm-shutdown update/termux-vm-shutdown
 install -m 755 vsock-net update/termux-vsock-net
+install -m 755 vsock-ssh update/termux-vsock-ssh
+mkdir -p update/systemd/units
+install -m 755 "$source_dir/systemd/install.sh" update/systemd/install.sh
+install -m 755 termux-vm-check update/systemd/termux-vm-check
+install -m 644 "$source_dir/systemd/units/"* update/systemd/units/
+install -m 644 "$source_dir/systemd/journald.conf" update/systemd/journald.conf
+sudo bash update/systemd/install.sh "$work/root" "$work/update"
+sudo systemd-analyze --root="$work/root" verify "$work/root/etc/systemd/system/termux-vm"*.service \
+    "$work/root/etc/systemd/system/termux-vm.target"
 tar -C update -cf "$out/guest-update.tar" .
 sudo mkdir -p root/dev root/proc root/sys root/run root/tmp
 sudo test -c root/dev/console || sudo mknod -m 600 root/dev/console c 5 1

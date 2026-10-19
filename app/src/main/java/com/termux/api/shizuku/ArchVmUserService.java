@@ -13,8 +13,6 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -28,18 +26,21 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private final Object guard = new Object();
     private final StringBuilder output = new StringBuilder();
     private final ArchVmSessions sessions = new ArchVmSessions();
+    private final ArchVmShutdownAttempt shutdownAttempt = new ArchVmShutdownAttempt();
     private boolean suspended;
     private String idleFailure;
     private ArchVmInstance child;
     private ArchVmBridge bridge;
     private ArchVmNetwork network;
-    private RandomAccessFile lockFile;
-    private FileLock lock;
+    private ArchVmOwnerLock ownerLock;
     private boolean starting, ownerActive, stopping, ready, cleanShutdown;
     private int cid;
     private String hostKey, authorizedKey, failure;
     private int memoryMiB;
     private String memoryPreferenceError;
+    private String sharedStoragePath, sharedStorageError;
+    private String graphicsMode = ArchVmGraphics.NONE;
+    private boolean sharedStorageMounted;
     private long startedAt;
     private Long readyAfterMs;
     private CountDownLatch ownerFinished = new CountDownLatch(0);
@@ -67,13 +68,22 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     @Override public String startWithMemory(String publicKey, int requestedMemoryMiB) {
+        return startWithGraphics(publicKey, requestedMemoryMiB, null);
+    }
+
+    @Override public String startWithGraphics(String publicKey, int requestedMemoryMiB, String requestedGraphics) {
         authorize();
         if (requestedMemoryMiB < 0) return memoryError("invalid_memory_mib");
+        final String selectedGraphics;
+        try { selectedGraphics = ArchVmGraphics.parse(requestedGraphics); }
+        catch (IllegalArgumentException invalid) { return memoryError("invalid_graphics_mode"); }
         CountDownLatch spawned = new CountDownLatch(1);
         CountDownLatch finished = new CountDownLatch(1);
         final long launchMemoryBytes;
         synchronized (guard) {
             if (ownerActive) {
+                if (!ArchVmGraphics.canReuse(graphicsMode, requestedGraphics))
+                    return memoryError("graphics_change_requires_stop");
                 if (requestedMemoryMiB != 0 && requestedMemoryMiB != memoryMiB)
                     return memoryError("memory_change_requires_stop");
                 if (publicKey != null && !publicKey.equals(authorizedKey))
@@ -94,6 +104,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (sessions.count() == 0) sessions.clear();
                 return report();
             }
+            if (ArchVmGraphics.GFXSTREAM.equals(selectedGraphics)
+                    && !ArchVmGraphics.kernel(BASE, selectedGraphics).isFile())
+                return memoryError("graphics_kernel_missing");
             try {
                 int selected = requestedMemoryMiB == 0 ? savedMemoryMiB() : requestedMemoryMiB;
                 ActivityManager.MemoryInfo host = new ActivityManager.MemoryInfo();
@@ -108,12 +121,15 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             try {
                 validateFile(BASE, true, 0, 0);
                 File owner = new File(BASE, "owner.lock");
-                if (owner.exists()) validateFile(owner, false, 0, 0);
-                lockFile = new RandomAccessFile(owner, "rw");
-                Os.chmod(owner.getPath(), 0600);
-                lock = lockFile.getChannel().tryLock();
-                if (lock == null) throw new IllegalStateException("Guest is already owned");
-                validateFile(new File(BASE, "Image"), false, 4096, 256L * 1024 * 1024);
+                ownerLock = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0));
+                if (ownerLock == null) throw new IllegalStateException("Guest is already owned");
+                sharedStoragePath = savedSharedStorage();
+                ArchVmSharedStorage.validateDirectory(sharedStoragePath);
+                sharedStorageMounted = false;
+                sharedStorageError = null;
+                validateFile(ArchVmGraphics.kernel(BASE, selectedGraphics), false, 4096, 256L * 1024 * 1024);
+                graphicsMode = selectedGraphics;
                 validateFile(new File(BASE, "arch-rootfs.img"), false, 1024 * 1024, Long.MAX_VALUE);
                 File seed = new File(BASE, "authorized-key.bin");
                 if (seed.exists()) validateFile(seed, false, 4096, 4096);
@@ -146,7 +162,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             ArchVmInstance running = null;
             boolean attemptedStart = false;
             try {
-                running = new ArchVmInstance(context, BASE, launchMemoryBytes);
+                running = new ArchVmInstance(context, BASE, launchMemoryBytes, sharedStoragePath, selectedGraphics);
                 synchronized (guard) { child = running; }
                 final ArchVmInstance current = running;
                 Thread drain = new Thread(() -> drain(current), "arch-vm-console");
@@ -199,19 +215,33 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             while ((count = stream.read(bytes)) != -1) {
                 synchronized (guard) {
                     if (child != instance) return;
-                    output.append(new String(bytes, 0, count, StandardCharsets.UTF_8));
+                    String chunk = new String(bytes, 0, count, StandardCharsets.UTF_8);
+                    output.append(chunk);
                     if (hostKey == null) hostKey = ArchVmProtocol.hostKey(output.toString());
+                    if (sharedStoragePath != null && output.indexOf(ArchVmSharedStorage.MOUNTED) >= 0)
+                        sharedStorageMounted = true;
+                    if (output.indexOf(ArchVmSharedStorage.UNMOUNTED) >= 0) sharedStorageMounted = false;
                     if (!ready && hostKey != null && output.indexOf("TERMUX_ARCH_READY_V2") >= 0) {
                         bridge = new ArchVmBridge(child);
                         network = new ArchVmNetwork(child, BASE);
                         ready = true;
                         readyAfterMs = SystemClock.elapsedRealtime() - startedAt;
+                        if (sharedStoragePath != null && !sharedStorageMounted) {
+                            sharedStorageError = "shared_storage_not_mounted_check_guest_helpers";
+                            failure = sharedStorageError;
+                        }
                         try { saveMemoryMiB(); memoryPreferenceError = null; }
                         catch (Exception error) {
                             memoryPreferenceError = "Could not save RAM preference: " + error.getClass().getSimpleName();
                         }
                     }
                     if (output.indexOf("TERMUX_ARCH_STOPPING_V2") >= 0) cleanShutdown = true;
+                    if (shutdownAttempt.append(chunk)) {
+                        failure = "shutdown_failed_guest_left_running";
+                        idleFailure = "shutdown_failed_guest_left_running";
+                        stopping = false;
+                        guard.notifyAll();
+                    }
                     if (output.length() > 32768) output.delete(0, output.length() - 32768);
                 }
             }
@@ -240,7 +270,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private void idleIfUnused(ArchVmInstance running) {
         synchronized (guard) {
-            if (child != running || !ready || stopping || suspended || idleFailure != null) return;
+            if (child != running || !ready || stopping || suspended || idleFailure != null
+                    || shutdownAttempt.blocksIdle()) return;
             sessions.expire(SystemClock.elapsedRealtime());
             if (!sessions.shouldIdle(bridge == null ? 0 : bridge.connections())) return;
             if (sessions.keepMemory()) {
@@ -299,13 +330,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (bytes < image.length() || bytes % (1024 * 1024) != 0)
                     return memoryError("disk_size_must_grow_in_whole_mib");
                 File owner = new File(BASE, "owner.lock");
-                if (owner.exists()) validateFile(owner, false, 0, 0);
-                try (RandomAccessFile handle = new RandomAccessFile(owner, "rw")) {
-                    Os.chmod(owner.getPath(), 0600);
-                    try (FileLock exclusive = handle.getChannel().tryLock()) {
-                        if (exclusive == null) return memoryError("guest_is_owned_elsewhere");
-                        ArchVmDisk.grow(image, bytes);
-                    }
+                try (ArchVmOwnerLock exclusive = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0))) {
+                    if (exclusive == null) return memoryError("guest_is_owned_elsewhere");
+                    ArchVmDisk.grow(image, bytes);
                 }
                 return new JSONObject(report()).put("filesystem_growth_required", true).toString();
             } catch (Exception error) { return memoryError("disk_growth_failed: " + error.getClass().getSimpleName()); }
@@ -315,11 +343,58 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     @Override public String status() { authorize(); synchronized (guard) { return report(); } }
     @Override public String stop() { authorize(); return stopOwned(); }
 
+    @Override public String configureSharedStorage(String path) {
+        authorize();
+        synchronized (guard) {
+            sessions.expire(SystemClock.elapsedRealtime());
+            if (ownerActive || sessions.count() != 0) return memoryError("shared_storage_change_requires_stop");
+            File temporary = null;
+            try {
+                String selected = ArchVmSharedStorage.parse(path);
+                ArchVmSharedStorage.validateDirectory(selected);
+                validateFile(BASE, true, 0, 0);
+                File owner = new File(BASE, "owner.lock");
+                try (ArchVmOwnerLock exclusive = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0))) {
+                    if (exclusive == null) return memoryError("guest_already_owned");
+                    File destination = new File(BASE, "shared-storage-path");
+                    if (destination.exists() || java.nio.file.Files.isSymbolicLink(destination.toPath()))
+                        validateFile(destination, false, 0, 4097);
+                    temporary = File.createTempFile("shared-storage-", ".tmp", BASE);
+                    Os.chmod(temporary.getPath(), 0600);
+                    try (FileOutputStream stream = new FileOutputStream(temporary)) {
+                        stream.write((selected == null ? "" : selected).getBytes(StandardCharsets.UTF_8));
+                        stream.getFD().sync();
+                    }
+                    java.nio.file.Files.move(temporary.toPath(), destination.toPath(),
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                sharedStoragePath = selected;
+                sharedStorageMounted = false;
+                sharedStorageError = null;
+                // Clear a prior sharing error after an explicit stopped-state correction.
+                if (failure != null && failure.startsWith("shared_storage_")) failure = null;
+                return report();
+            } catch (Exception error) {
+                return memoryError("shared_storage_config_failed: " + error.getClass().getSimpleName());
+            } finally { if (temporary != null) temporary.delete(); }
+        }
+    }
+
+    private String savedSharedStorage() throws Exception {
+        File file = new File(BASE, "shared-storage-path");
+        if (!file.exists() && !java.nio.file.Files.isSymbolicLink(file.toPath())) return null;
+        validateFile(file, false, 0, 4097);
+        return ArchVmSharedStorage.parse(new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    }
+
     private String stopOwned() {
         ArchVmInstance running;
         CountDownLatch finished;
+        long attempt;
         synchronized (guard) {
             if (starting) return "{\"status\":\"busy\",\"reason\":\"start_in_progress\"}";
+            if (shutdownAttempt.blocksDuplicateStop(stopping)) return report();
             running = child;
             if (suspended && running != null) {
                 try {
@@ -331,6 +406,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             }
             finished = ownerFinished;
             stopping = ownerActive;
+            attempt = ownerActive ? shutdownAttempt.begin() : 0;
+            if (ownerActive && "shutdown_failed_guest_left_running".equals(failure)) {
+                failure = null;
+                if ("shutdown_failed_guest_left_running".equals(idleFailure)) idleFailure = null;
+            }
             guard.notifyAll();
         }
         if (running != null) {
@@ -339,18 +419,29 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     running.input.write("poweroff\n".getBytes(StandardCharsets.US_ASCII));
                     running.input.flush();
                     long deadline = SystemClock.elapsedRealtime() + 12000;
-                    while (running.isAlive() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
+                    while (running.isAlive() && SystemClock.elapsedRealtime() < deadline) {
+                        synchronized (guard) { if (shutdownAttempt.failed(attempt)) break; }
+                        Thread.sleep(100);
+                    }
                 }
-                if (running.isAlive()) {
-                    synchronized (guard) { failure = "shutdown_timeout_guest_left_running"; }
-                } else {
+                // The Binder request has a short budget, but systemd may be
+                // waiting for a service's graceful stop timeout. Return
+                // "stopping" and let the owner loop observe eventual exit;
+                // a request timeout is not evidence of failed guest shutdown.
+                if (!running.isAlive()) {
                     // The idle monitor itself can initiate shutdown; it cannot await itself.
                     if (!"arch-vm-owner".equals(Thread.currentThread().getName()))
                         finished.await(1, TimeUnit.SECONDS);
                     synchronized (guard) { if (child == running) stopped(); }
                 }
             } catch (Exception error) {
-                synchronized (guard) { failure = "shutdown_failed_guest_left_running"; }
+                synchronized (guard) {
+                    shutdownAttempt.fail(attempt);
+                    failure = "shutdown_failed_guest_left_running";
+                    idleFailure = "shutdown_failed_guest_left_running";
+                    stopping = false;
+                    guard.notifyAll();
+                }
             }
         }
         synchronized (guard) { return report(); }
@@ -358,6 +449,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private void stopped() {
         ownerActive = stopping = suspended = false;
+        shutdownAttempt.finish();
+        sharedStorageMounted = false;
         sessions.clear();
         guard.notifyAll();
         if (bridge != null) bridge.close();
@@ -370,28 +463,42 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     private void releaseLock() {
-        if (lock != null) try { lock.release(); } catch (Exception ignored) { }
-        if (lockFile != null) try { lockFile.close(); } catch (Exception ignored) { }
-        lock = null;
-        lockFile = null;
+        if (ownerLock != null) ownerLock.close();
+        ownerLock = null;
     }
 
     private String report() {
         try {
+            String configuredShare = sharedStoragePath;
+            String shareError = sharedStorageError;
+            if (!ownerActive) try { configuredShare = savedSharedStorage(); }
+            catch (Exception error) { shareError = "invalid_shared_storage_config"; }
             Object nextMemory;
             try { nextMemory = savedMemoryMiB(); }
             catch (Exception invalid) {
                 nextMemory = JSONObject.NULL;
                 memoryPreferenceError = "Invalid saved RAM preference: " + invalid.getClass().getSimpleName();
             }
-            Object balloonEnabled = JSONObject.NULL, balloonBytes = JSONObject.NULL;
-            if (child != null && ownerActive && !starting) try {
-                balloonEnabled = child.balloonEnabled();
-                if (Boolean.TRUE.equals(balloonEnabled)) balloonBytes = child.balloonBytes();
-            } catch (Exception ignored) { }
+            // A balloon statistics request waits on the guest. In a suspended VM
+            // it can block indefinitely while holding guard, preventing resume
+            // and shutdown as well as status. Report cached configuration only.
+            Object balloonEnabled = child != null && ownerActive && !starting
+                    ? child.balloonEnabled() : JSONObject.NULL;
             File disk = new File(BASE, "arch-rootfs.img");
-            return new JSONObject().put("memory_balloon_enabled", balloonEnabled)
-                    .put("memory_balloon_bytes", balloonBytes).put("disk_capacity_bytes", disk.length())
+            return new JSONObject().put("shared_storage_supported", true)
+                    .put("graphics_configurable", true)
+                    .put("graphics_mode", ownerActive ? graphicsMode : ArchVmGraphics.NONE)
+                    .put("graphics_kernel_present", ArchVmGraphics.kernel(BASE, ArchVmGraphics.GFXSTREAM).isFile())
+                    .put("graphics_rendering", "not_probed")
+                    .put("shared_storage_enabled", configuredShare != null)
+                    .put("shared_storage_host_path", configuredShare == null ? JSONObject.NULL : configuredShare)
+                    .put("shared_storage_guest_path", ArchVmSharedStorage.GUEST_PATH)
+                    .put("shared_storage_mounted", ownerActive && sharedStorageMounted)
+                    .put("shared_storage_error", shareError == null ? JSONObject.NULL : shareError)
+                    .put("memory_balloon_enabled", balloonEnabled)
+                    .put("memory_balloon_bytes", JSONObject.NULL)
+                    .put("memory_balloon_stats", "not_polled")
+                    .put("disk_capacity_bytes", disk.length())
                     .put("status", failure != null ? "error" : starting ? "starting"
                             : ownerActive ? stopping ? "stopping" : suspended ? "suspended" : ready ? "ready" : "booting" : "stopped")
                     .put("backend", "android_avf").put("service_uid", Process.myUid())

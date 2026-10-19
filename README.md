@@ -79,7 +79,9 @@ These are functionality checks, not proof of a speed advantage over PRoot.
 [Terminal performance measurements](https://github.com/wallentx/termux-aether-app/blob/dev/docs/PERFORMANCE.md)
 belong to the main app.
 
-The guest currently uses a minimal init rather than a normal systemd environment.
+New guest builds use systemd with AVF-specific services. Existing guests require
+the [systemd migration](guest/arch/systemd/README.md); the legacy init remains
+available for recovery.
 Networking supports outbound IPv4 TCP/UDP; IPv6, raw ICMP, GPU/audio passthrough,
 and protected guest execution are not provided by this setup. Shared directories
 are trusted workspaces with SFTP/SSHFS semantics, not a hostile-code sandbox.
