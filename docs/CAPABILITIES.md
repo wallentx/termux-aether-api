@@ -1,7 +1,7 @@
 # Pixel device-status bridge
 
 Run `termux-capabilities --json` from native Termux using the matching
-`wallentx/termux-api-package` command. The APK adds the `Capabilities` method to the
+`wallentx/termux-aether-api-package` command. The APK adds the `Capabilities` method to the
 existing dispatcher. JSON is also the default without `--json`. The CLI imposes a
 15-second deadline; exit 124 means the companion app did not respond in time.
 An exit of zero means a report was returned, not that every capability is usable.

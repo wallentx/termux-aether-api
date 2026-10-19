@@ -21,8 +21,8 @@ android {
         applicationId "com.termux.api"
         minSdk project.properties.minSdkVersion.toInteger()
         targetSdk project.properties.targetSdkVersion.toInteger()
-        versionCode 1002
-        versionName "0.53.0"
+        versionCode 1000000000
+        versionName "1000.0.0"
 
         if (appVersionName) versionName = appVersionName
         validateVersionName(versionName)
@@ -74,7 +74,7 @@ android {
 
     applicationVariants.all { variant ->
         variant.outputs.all { output ->
-            outputFileName = new File("termux-api-app_" +
+            outputFileName = new File("termux-aether-api_" +
                     (apkVersionTag ? apkVersionTag : "v" + versionName + "+" + variant.buildType.name) + ".apk")
         }
     }
