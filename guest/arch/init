@@ -1,0 +1,8 @@
+#!/usr/bin/bash
+# Keep the existing AVF init path while handing PID 1 to systemd.
+set -eu
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin
+mountpoint -q /proc || mount -t proc proc /proc
+# The AVF kernel starts root read-only; no initramfs remounts it.
+mount -o remount,rw /
+exec /usr/lib/systemd/systemd

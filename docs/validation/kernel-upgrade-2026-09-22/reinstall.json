@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "operation": "install",
+  "state": "/data/data/com.termux/files/home/.local/state/termux-aether/kernel-3bbad29e803a4f569149494459ba36b6",
+  "stage": "/data/local/tmp/aether-kernel-3bbad29e803a4f569149494459ba36b6",
+  "before_sha256": "3a04b30955695df5e7b278bd73eeb2e821b251c3a3dfae2532a095ca530dd7a9",
+  "image_sha256": "1bab0b33d9bede1ac3546e59caf1b1c824a9c37e5f733a5601b4de88a4d8837a",
+  "backup_id": "15323a4d3dee42489befc70677c4c7c1",
+  "disk_inode": 288875,
+  "disk_device": 65042,
+  "disk_bytes": 17179869184,
+  "boot_verified": false
+}

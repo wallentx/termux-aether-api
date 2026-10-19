@@ -1,0 +1,16 @@
+[Unit]
+Description=Optional AVF shared-storage mount
+ConditionKernelCommandLine=termux_shared_storage=1
+After=local-fs.target
+Before=termux-vm-ready.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/termux-vm-systemd shared-mount
+ExecStop=/usr/local/sbin/termux-vm-systemd shared-unmount
+TimeoutStartSec=15
+TimeoutStopSec=15
+StandardOutput=tty
+StandardError=journal+console
+TTYPath=/dev/hvc0

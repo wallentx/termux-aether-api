@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "state": "/data/data/com.termux/files/home/.local/state/termux-aether/virtiofs-40bcf47cc09d470eb692b492b583abc2",
+  "stage": "/data/local/tmp/aether-vufs-40bcf47cc09d470eb692b492b583abc2",
+  "public": "/storage/emulated/0/Download/aether-vufs-40bcf47cc09d470eb692b492b583abc2",
+  "root_disk_attached": false,
+  "verified": [
+    "mount",
+    "host-to-guest read",
+    "guest-to-host write",
+    "rename",
+    "unmount"
+  ]
+}

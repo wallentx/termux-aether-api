@@ -3,6 +3,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:sharedUserId="${TERMUX_PACKAGE_NAME}">
 
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+    </queries>
+
 
 
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
@@ -37,6 +41,9 @@
     <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.DUMP" tools:ignore="ProtectedPermissions" />
+    <!-- Development grants are explicit ADB setup; the status probe never grants them. -->
+    <uses-permission android:name="android.permission.MANAGE_VIRTUAL_MACHINE" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.USE_CUSTOM_VIRTUAL_MACHINE" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
 
     <!-- This permission is not used, but a permission is needed on the sharedfiles contentprovider,
@@ -69,11 +76,25 @@
         android:theme="@android:style/Theme.Material.Light"
         tools:ignore="GoogleAppIndexingWarning">
 
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
         <activity
             android:name=".activities.TermuxAPIMainActivity"
             android:exported="true"
             android:theme="@style/Theme.BaseActivity.DayNight.NoActionBar">
         </activity>
+
+        <activity
+            android:name=".activities.ShizukuAccessActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:label="@string/shizuku_access" />
 
         <activity-alias
             android:name=".activities.TermuxAPILauncherActivity"

@@ -1,0 +1,7 @@
+[Unit]
+Description=Termux Arch AVF guest integration
+Wants=termux-vm-console.service termux-vm-ready.service termux-vm-network.service
+After=termux-vm-ready.service
+
+[Install]
+WantedBy=multi-user.target
