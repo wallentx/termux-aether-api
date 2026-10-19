@@ -13,8 +13,6 @@ import org.json.JSONObject;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
-import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -28,13 +26,13 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private final Object guard = new Object();
     private final StringBuilder output = new StringBuilder();
     private final ArchVmSessions sessions = new ArchVmSessions();
+    private final ArchVmShutdownAttempt shutdownAttempt = new ArchVmShutdownAttempt();
     private boolean suspended;
     private String idleFailure;
     private ArchVmInstance child;
     private ArchVmBridge bridge;
     private ArchVmNetwork network;
-    private RandomAccessFile lockFile;
-    private FileLock lock;
+    private ArchVmOwnerLock ownerLock;
     private boolean starting, ownerActive, stopping, ready, cleanShutdown;
     private int cid;
     private String hostKey, authorizedKey, failure;
@@ -123,11 +121,9 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             try {
                 validateFile(BASE, true, 0, 0);
                 File owner = new File(BASE, "owner.lock");
-                if (owner.exists()) validateFile(owner, false, 0, 0);
-                lockFile = new RandomAccessFile(owner, "rw");
-                Os.chmod(owner.getPath(), 0600);
-                lock = lockFile.getChannel().tryLock();
-                if (lock == null) throw new IllegalStateException("Guest is already owned");
+                ownerLock = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0));
+                if (ownerLock == null) throw new IllegalStateException("Guest is already owned");
                 sharedStoragePath = savedSharedStorage();
                 ArchVmSharedStorage.validateDirectory(sharedStoragePath);
                 sharedStorageMounted = false;
@@ -219,7 +215,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             while ((count = stream.read(bytes)) != -1) {
                 synchronized (guard) {
                     if (child != instance) return;
-                    output.append(new String(bytes, 0, count, StandardCharsets.UTF_8));
+                    String chunk = new String(bytes, 0, count, StandardCharsets.UTF_8);
+                    output.append(chunk);
                     if (hostKey == null) hostKey = ArchVmProtocol.hostKey(output.toString());
                     if (sharedStoragePath != null && output.indexOf(ArchVmSharedStorage.MOUNTED) >= 0)
                         sharedStorageMounted = true;
@@ -239,6 +236,12 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                         }
                     }
                     if (output.indexOf("TERMUX_ARCH_STOPPING_V2") >= 0) cleanShutdown = true;
+                    if (shutdownAttempt.append(chunk)) {
+                        failure = "shutdown_failed_guest_left_running";
+                        idleFailure = "shutdown_failed_guest_left_running";
+                        stopping = false;
+                        guard.notifyAll();
+                    }
                     if (output.length() > 32768) output.delete(0, output.length() - 32768);
                 }
             }
@@ -267,7 +270,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private void idleIfUnused(ArchVmInstance running) {
         synchronized (guard) {
-            if (child != running || !ready || stopping || suspended || idleFailure != null) return;
+            if (child != running || !ready || stopping || suspended || idleFailure != null
+                    || shutdownAttempt.blocksIdle()) return;
             sessions.expire(SystemClock.elapsedRealtime());
             if (!sessions.shouldIdle(bridge == null ? 0 : bridge.connections())) return;
             if (sessions.keepMemory()) {
@@ -326,13 +330,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 if (bytes < image.length() || bytes % (1024 * 1024) != 0)
                     return memoryError("disk_size_must_grow_in_whole_mib");
                 File owner = new File(BASE, "owner.lock");
-                if (owner.exists()) validateFile(owner, false, 0, 0);
-                try (RandomAccessFile handle = new RandomAccessFile(owner, "rw")) {
-                    Os.chmod(owner.getPath(), 0600);
-                    try (FileLock exclusive = handle.getChannel().tryLock()) {
-                        if (exclusive == null) return memoryError("guest_is_owned_elsewhere");
-                        ArchVmDisk.grow(image, bytes);
-                    }
+                try (ArchVmOwnerLock exclusive = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0))) {
+                    if (exclusive == null) return memoryError("guest_is_owned_elsewhere");
+                    ArchVmDisk.grow(image, bytes);
                 }
                 return new JSONObject(report()).put("filesystem_growth_required", true).toString();
             } catch (Exception error) { return memoryError("disk_growth_failed: " + error.getClass().getSimpleName()); }
@@ -353,9 +354,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                 ArchVmSharedStorage.validateDirectory(selected);
                 validateFile(BASE, true, 0, 0);
                 File owner = new File(BASE, "owner.lock");
-                validateFile(owner, false, 0, 0);
-                try (RandomAccessFile handle = new RandomAccessFile(owner, "rw");
-                     FileLock exclusive = handle.getChannel().tryLock()) {
+                try (ArchVmOwnerLock exclusive = ArchVmOwnerLock.acquire(owner,
+                        file -> validateFile(file, false, 0, 0))) {
                     if (exclusive == null) return memoryError("guest_already_owned");
                     File destination = new File(BASE, "shared-storage-path");
                     if (destination.exists() || java.nio.file.Files.isSymbolicLink(destination.toPath()))
@@ -391,8 +391,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     private String stopOwned() {
         ArchVmInstance running;
         CountDownLatch finished;
+        long attempt;
         synchronized (guard) {
             if (starting) return "{\"status\":\"busy\",\"reason\":\"start_in_progress\"}";
+            if (shutdownAttempt.blocksDuplicateStop(stopping)) return report();
             running = child;
             if (suspended && running != null) {
                 try {
@@ -404,6 +406,11 @@ public final class ArchVmUserService extends IArchVmService.Stub {
             }
             finished = ownerFinished;
             stopping = ownerActive;
+            attempt = ownerActive ? shutdownAttempt.begin() : 0;
+            if (ownerActive && "shutdown_failed_guest_left_running".equals(failure)) {
+                failure = null;
+                if ("shutdown_failed_guest_left_running".equals(idleFailure)) idleFailure = null;
+            }
             guard.notifyAll();
         }
         if (running != null) {
@@ -412,7 +419,10 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     running.input.write("poweroff\n".getBytes(StandardCharsets.US_ASCII));
                     running.input.flush();
                     long deadline = SystemClock.elapsedRealtime() + 12000;
-                    while (running.isAlive() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(100);
+                    while (running.isAlive() && SystemClock.elapsedRealtime() < deadline) {
+                        synchronized (guard) { if (shutdownAttempt.failed(attempt)) break; }
+                        Thread.sleep(100);
+                    }
                 }
                 // The Binder request has a short budget, but systemd may be
                 // waiting for a service's graceful stop timeout. Return
@@ -425,7 +435,13 @@ public final class ArchVmUserService extends IArchVmService.Stub {
                     synchronized (guard) { if (child == running) stopped(); }
                 }
             } catch (Exception error) {
-                synchronized (guard) { failure = "shutdown_failed_guest_left_running"; }
+                synchronized (guard) {
+                    shutdownAttempt.fail(attempt);
+                    failure = "shutdown_failed_guest_left_running";
+                    idleFailure = "shutdown_failed_guest_left_running";
+                    stopping = false;
+                    guard.notifyAll();
+                }
             }
         }
         synchronized (guard) { return report(); }
@@ -433,6 +449,7 @@ public final class ArchVmUserService extends IArchVmService.Stub {
 
     private void stopped() {
         ownerActive = stopping = suspended = false;
+        shutdownAttempt.finish();
         sharedStorageMounted = false;
         sessions.clear();
         guard.notifyAll();
@@ -446,10 +463,8 @@ public final class ArchVmUserService extends IArchVmService.Stub {
     }
 
     private void releaseLock() {
-        if (lock != null) try { lock.release(); } catch (Exception ignored) { }
-        if (lockFile != null) try { lockFile.close(); } catch (Exception ignored) { }
-        lock = null;
-        lockFile = null;
+        if (ownerLock != null) ownerLock.close();
+        ownerLock = null;
     }
 
     private String report() {

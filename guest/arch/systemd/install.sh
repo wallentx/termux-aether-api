@@ -33,18 +33,19 @@ masks=(sshd.service dhcpcd.service systemd-networkd.service systemd-networkd-wai
        systemd-resolved-monitor.socket systemd-timesyncd.service serial-getty@hvc0.service console-getty.service)
 paths=(usr/local/sbin/termux-vm-init "${runtime_destinations[@]}"
        usr/lib/systemd/system-shutdown/termux-vm-check etc/systemd/journald.conf.d/termux-vm.conf
-       etc/systemd/system/multi-user.target.wants/termux-vm.target etc/systemd/system/local-fs.target.wants/tmp.mount)
+       etc/systemd/system/multi-user.target.wants/termux-vm.target etc/systemd/system/local-fs.target.wants/tmp.mount
+       etc/resolv.conf)
 for unit in "${unit_files[@]}"; do paths+=("etc/systemd/system/$unit"); done
 for unit in "${masks[@]}"; do paths+=("etc/systemd/system/$unit"); done
 if [[ -z $root ]]; then
     # Capture exactly the files and symlinks this installer can replace.
-    install -d -m 700 /var/lib/termux-vm/systemd-backups
-    backup=$(mktemp -d /var/lib/termux-vm/systemd-backups/install.XXXXXX)
+    install -d -m 700 "$root/var/lib/termux-vm/systemd-backups"
+    backup=$(mktemp -d "$root/var/lib/termux-vm/systemd-backups/install.XXXXXX")
     printf '%s\n' "${paths[@]}" > "$backup/paths"
     for file in "${paths[@]}"; do
-        if [[ -e /$file || -L /$file ]]; then printf '%s\n' "$file"; fi
+        if [[ -e $root/$file || -L $root/$file ]]; then printf '%s\n' "$file"; fi
     done > "$backup/existing"
-    tar -C / -cpf "$backup/before.tar" --verbatim-files-from -T "$backup/existing"
+    tar -C "${root:-/}" -cpf "$backup/before.tar" --verbatim-files-from -T "$backup/existing"
     printf 'SYSTEMD_BACKUP=%s\n' "$backup"
 fi
 install -d -m 755 "$root/etc/systemd/system/multi-user.target.wants" \
@@ -62,6 +63,24 @@ install -m 644 "$payload/systemd/journald.conf" "$root/etc/systemd/journald.conf
 for unit in "${masks[@]}"; do ln -sfn /dev/null "$root/etc/systemd/system/$unit"; done
 ln -sfn ../termux-vm.target "$root/etc/systemd/system/multi-user.target.wants/termux-vm.target"
 ln -sfn /usr/lib/systemd/system/tmp.mount "$root/etc/systemd/system/local-fs.target.wants/tmp.mount"
+# resolved is masked above; migrate only its known distro links to the DHCP
+# hook's resolver. Preserve regular files and administrator-selected links.
+if [[ -L $root/etc/resolv.conf ]]; then
+    resolver_target=$(readlink -- "$root/etc/resolv.conf")
+    case $resolver_target in
+        /run/systemd/resolve/resolv.conf|../run/systemd/resolve/resolv.conf|\
+        /run/systemd/resolve/stub-resolv.conf|../run/systemd/resolve/stub-resolv.conf)
+            pending_resolver=$(mktemp "$root/etc/.termux-resolv.conf.XXXXXX")
+            ln -sfn /run/termux-network/resolv.conf "$pending_resolver"
+            # Recheck after staging so a custom DNS change is not overwritten.
+            if [[ -L $root/etc/resolv.conf && $(readlink -- "$root/etc/resolv.conf") == "$resolver_target" ]]; then
+                mv -Tf -- "$pending_resolver" "$root/etc/resolv.conf"
+            else
+                rm -f -- "$pending_resolver"
+            fi
+            ;;
+    esac
+fi
 # Activate only after every dependency is present. Rename is atomic and leaves
 # the running legacy PID 1 on its old inode until its normal clean shutdown.
 pending=$(mktemp "$root/usr/local/sbin/.termux-vm-init.XXXXXX")
