@@ -1,7 +1,10 @@
 name: Virtio-FS diskless probe
 on:
   push:
-    branches: ['wallentx/**']
+    branches: ['dev', 'wallentx/**']
+    paths: ['guest/arch/virtiofs-probe/**', 'guest/arch/kernel.config', 'guest/arch/build.sh', '.github/workflows/virtiofs-probe.yml']
+  pull_request:
+    branches: [master, dev]
     paths: ['guest/arch/virtiofs-probe/**', 'guest/arch/kernel.config', 'guest/arch/build.sh', '.github/workflows/virtiofs-probe.yml']
   workflow_dispatch:
 permissions:
@@ -11,6 +14,11 @@ concurrency:
   cancel-in-progress: true
 jobs:
   probe:
+    # dev and wallentx branches already run these tests on push.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository ||
+      (github.head_ref != 'dev' && !startsWith(github.head_ref, 'wallentx/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -26,7 +34,7 @@ jobs:
           path: |
             guest-out/Image
             guest-out/kernel.config
-          key: arch-kernel-v1-6.18.52-${{ hashFiles('guest/arch/kernel.config') }}
+          key: arch-kernel-v2-${{ hashFiles('guest/arch/kernel.config', 'guest/arch/build.sh') }}
       - name: Build guest kernel
         if: steps.kernel.outputs.cache-hit != 'true'
         run: bash guest/arch/build.sh kernel

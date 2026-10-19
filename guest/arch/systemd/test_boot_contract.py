@@ -44,6 +44,19 @@ STOCK_UNITS_TO_MASK = {
     "console-getty.service",
 }
 
+RUNTIME_PAYLOADS = {
+    "termux-vm-init": "usr/local/sbin/termux-vm-init",
+    "termux-vm-legacy-init": "usr/local/sbin/termux-vm-legacy-init",
+    "termux-vm-systemd": "usr/local/sbin/termux-vm-systemd",
+    "termux-vm-shutdown": "usr/local/sbin/termux-vm-shutdown",
+    "termux-vm-network": "usr/local/sbin/termux-vm-network",
+    "termux-vm-shared-storage": "usr/local/sbin/termux-vm-shared-storage",
+    "termux-vsock-net": "usr/local/sbin/termux-vsock-net",
+    "termux-vsock-ssh": "usr/local/sbin/termux-vsock-ssh",
+    "termux-dhcp-hook": "usr/local/libexec/termux-dhcp-hook",
+    "termux-landlock-check": "usr/local/bin/termux-landlock-check",
+}
+
 
 def read_unit(name: str) -> str:
     return (UNITS / name).read_text()
@@ -120,21 +133,40 @@ class SystemdBootContractTest(unittest.TestCase):
 
     def test_installer_activates_the_new_entrypoint_last(self) -> None:
         installer = (SYSTEMD / "install.sh").read_text()
-        install_loop = re.search(
-            r"for file in (.+?); do\n"
-            r"    install -m 755 \"\$payload/\$file\" \"\$root/usr/local/sbin/\$file\"\n"
-            r"done",
+        runtime_sources = re.search(
+            r"runtime_sources=\((.*?)\)\nruntime_destinations=",
             installer,
+            re.DOTALL,
         )
-        self.assertIsNotNone(install_loop)
-        self.assertNotIn("termux-vm-init", install_loop.group(1))
+        self.assertIsNotNone(runtime_sources)
+        self.assertNotIn("termux-vm-init", runtime_sources.group(1).split())
+        self.assertIn('paths=(usr/local/sbin/termux-vm-init "${runtime_destinations[@]}"', installer)
         activation = installer.index('mv -f -- "$pending" "$root/usr/local/sbin/termux-vm-init"')
         for prerequisite in (
-            'install -m 644 "$payload/systemd/units/"* "$root/etc/systemd/system/"',
+            'install -m 755 "$payload/${runtime_sources[$index]}" "$root/${runtime_destinations[$index]}"',
+            'install -m 644 "$payload/systemd/units/$unit" "$root/etc/systemd/system/$unit"',
             'for unit in "${masks[@]}"; do ln -sfn /dev/null',
             'ln -sfn ../termux-vm.target',
         ):
             self.assertLess(installer.index(prerequisite), activation)
+
+    def test_update_payload_covers_runtime_dependency_allowlist(self) -> None:
+        installer = (SYSTEMD / "install.sh").read_text()
+        build = (ARCH / "build.sh").read_text()
+        for source, destination in RUNTIME_PAYLOADS.items():
+            with self.subTest(source=source):
+                self.assertIn(source, installer)
+                self.assertIn(destination, installer)
+                self.assertRegex(build, rf"(?m)^install -m 755 .+ update/{re.escape(source)}$")
+
+        dependency_sources = [ARCH / "legacy-init", ARCH / "network", SYSTEMD / "guest-service"]
+        dependency_sources.extend(sorted(UNITS.iterdir()))
+        dependencies = set(re.findall(
+            r"/usr/local/(?:sbin|bin|libexec)/[A-Za-z0-9._-]+",
+            "\n".join(path.read_text() for path in dependency_sources if path.is_file()),
+        ))
+        installed = {f"/{destination}" for destination in RUNTIME_PAYLOADS.values()}
+        self.assertLessEqual(dependencies, installed)
 
     def test_bootstrap_owns_state_writes_before_services_can_use_them(self) -> None:
         bootstrap = read_unit("termux-vm-bootstrap.service")

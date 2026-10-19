@@ -76,6 +76,7 @@ install -m 755 "$source_dir/dhcp-hook" update/termux-dhcp-hook
 install -m 755 landlock-check update/termux-landlock-check
 install -m 755 vm-shutdown update/termux-vm-shutdown
 install -m 755 vsock-net update/termux-vsock-net
+install -m 755 vsock-ssh update/termux-vsock-ssh
 mkdir -p update/systemd/units
 install -m 755 "$source_dir/systemd/install.sh" update/systemd/install.sh
 install -m 755 termux-vm-check update/systemd/termux-vm-check
