@@ -12,6 +12,7 @@ import com.termux.api.TermuxApiReceiver;
 import com.termux.api.activities.ShizukuAccessActivity;
 import com.termux.api.shizuku.IThermalService;
 import com.termux.api.shizuku.ThermalUserService;
+import com.termux.api.shizuku.ShizukuManagers;
 import com.termux.api.util.ResultReturner;
 
 import org.json.JSONException;
@@ -59,20 +60,21 @@ public final class ShizukuAPI {
     }
 
     public static JSONObject status(Context context) throws JSONException {
-        boolean installed;
-        try {
-            context.getPackageManager().getPackageInfo("moe.shizuku.privileged.api", 0);
-            installed = true;
-        } catch (PackageManager.NameNotFoundException error) {
-            installed = false;
-        }
-        JSONObject result = new JSONObject().put("manager_installed", installed);
+        java.util.List<String> managers = ShizukuManagers.present(context.getPackageManager());
+        JSONObject result = new JSONObject().put("manager_installed", !managers.isEmpty())
+                .put("manager_packages", new org.json.JSONArray(managers))
+                .put("enabled_manager_packages", new org.json.JSONArray(
+                        ShizukuManagers.installed(context.getPackageManager())));
         if (!Shizuku.pingBinder()) return result.put("status", "unavailable")
                 .put("reason", "binder_not_connected").put("authorized", JSONObject.NULL);
         if (Shizuku.isPreV11()) return result.put("status", "unsupported").put("reason", "requires_shizuku_v11");
         boolean granted = Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED;
         result.put("status", granted ? "ok" : "denied").put("authorized", granted);
-        if (granted) result.put("service_uid", Shizuku.getUid());
+        if (granted) {
+            result.put("service_uid", Shizuku.getUid()).put("server_version", Shizuku.getVersion());
+            String serviceContext = Shizuku.getSELinuxContext();
+            result.put("service_selinux_context", serviceContext == null ? JSONObject.NULL : serviceContext);
+        }
         return result;
     }
 

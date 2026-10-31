@@ -1,6 +1,7 @@
 package com.termux.api.activities;
 
 import android.app.Activity;
+import android.annotation.SuppressLint;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
@@ -15,6 +16,7 @@ import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.termux.api.R;
+import com.termux.api.shizuku.ShizukuBinderDiscovery;
 
 import rikka.shizuku.Shizuku;
 
@@ -24,7 +26,17 @@ public final class ShizukuAccessActivity extends Activity {
     private TextView status;
     private Button request;
     private boolean automaticRequestUsed;
-    private final Shizuku.OnBinderReceivedListener received = () -> runOnUiThread(this::refresh);
+    private boolean resumed;
+    private boolean requestWhenConnected;
+    private final ShizukuBinderDiscovery discovery = new ShizukuBinderDiscovery();
+    private final Shizuku.OnBinderReceivedListener received = () -> runOnUiThread(() -> {
+        discovery.cancel();
+        refresh();
+        if (requestWhenConnected && resumed && !isFinishing() && !isDestroyed()) {
+            requestWhenConnected = false;
+            requestAccess();
+        }
+    });
     private final Shizuku.OnBinderDeadListener died = () -> runOnUiThread(this::refresh);
     private final Shizuku.OnRequestPermissionResultListener permission = (code, result) -> {
         if (code == REQUEST_ACCESS) runOnUiThread(this::refresh);
@@ -39,6 +51,7 @@ public final class ShizukuAccessActivity extends Activity {
         WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView())
             .setAppearanceLightNavigationBars(true);
         automaticRequestUsed = state != null && state.getBoolean("automatic_request_used");
+        requestWhenConnected = state != null && state.getBoolean("request_when_connected");
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         ViewCompat.setOnApplyWindowInsetsListener(scroll, (view, insets) -> {
@@ -69,7 +82,7 @@ public final class ShizukuAccessActivity extends Activity {
         Button manager = new Button(this);
         manager.setText(R.string.shizuku_open_manager);
         manager.setOnClickListener(view -> {
-            Intent launch = getPackageManager().getLaunchIntentForPackage("moe.shizuku.privileged.api");
+            Intent launch = com.termux.api.shizuku.ShizukuManagers.launchIntent(getPackageManager());
             if (launch != null) startActivity(launch);
             else status.setText(R.string.shizuku_install_manager);
         });
@@ -84,19 +97,28 @@ public final class ShizukuAccessActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         refresh();
-        if (getIntent().getBooleanExtra("request_permission", false) && !automaticRequestUsed) {
+        if (requestWhenConnected) {
+            if (Shizuku.pingBinder()) requestWhenConnected = false;
+            requestAccess();
+        } else if (getIntent().getBooleanExtra("request_permission", false) && !automaticRequestUsed) {
             automaticRequestUsed = true;
             requestAccess();
         }
+    }
+
+    @Override protected void onPause() {
+        resumed = false;
+        super.onPause();
     }
 
     private void refresh() {
         if (isFinishing() || isDestroyed()) return;
         try {
             if (!Shizuku.pingBinder()) {
-                status.setText(R.string.shizuku_not_running);
-                request.setEnabled(false);
+                status.setText(discovery.isActive() ? R.string.shizuku_connecting : R.string.shizuku_not_running);
+                request.setEnabled(!discovery.isActive());
             } else if (Shizuku.getVersion() < 13) {
                 status.setText(R.string.shizuku_too_old);
                 request.setEnabled(false);
@@ -113,7 +135,32 @@ public final class ShizukuAccessActivity extends Activity {
 
     private void requestAccess() {
         try {
-            if (!Shizuku.pingBinder() || Shizuku.getVersion() < 13) {
+            if (!Shizuku.pingBinder()) {
+                if (discovery.isActive()) return;
+                requestWhenConnected = true;
+                status.setText(R.string.shizuku_connecting);
+                request.setEnabled(false);
+                discovery.start(this, new ShizukuBinderDiscovery.Listener() {
+                    @SuppressLint("RestrictedApi")
+                    @Override public void onBinderReceived(android.os.IBinder binder) {
+                        if (isFinishing() || isDestroyed()) return;
+                        // Stock SDK handshake preserves the server's existing permission checks.
+                        try { Shizuku.onBinderReceived(binder, getPackageName()); }
+                        catch (RuntimeException unavailable) { requestWhenConnected = false; }
+                        refresh();
+                    }
+                    @Override public void onUnavailable(String reason) {
+                        requestWhenConnected = false;
+                        if (isFinishing() || isDestroyed()) return;
+                        refresh();
+                        status.setText("manager_missing".equals(reason)
+                                ? R.string.shizuku_install_manager : R.string.shizuku_connection_failed);
+                    }
+                });
+                if (discovery.isActive()) refresh();
+                return;
+            }
+            if (Shizuku.getVersion() < 13) {
                 refresh();
                 return;
             }
@@ -131,10 +178,13 @@ public final class ShizukuAccessActivity extends Activity {
 
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putBoolean("automatic_request_used", automaticRequestUsed);
+        state.putBoolean("request_when_connected", requestWhenConnected);
         super.onSaveInstanceState(state);
     }
 
     @Override protected void onDestroy() {
+        requestWhenConnected = false;
+        discovery.cancel();
         Shizuku.removeBinderReceivedListener(received);
         Shizuku.removeBinderDeadListener(died);
         Shizuku.removeRequestPermissionResultListener(permission);

@@ -3,8 +3,10 @@
     <string name="shizuku_access">Shizuku access</string>
     <string name="shizuku_explanation">Shizuku gives this app ADB-level access to read device diagnostics and manage the Arch virtual machine and its network bridge. You can revoke access in Shizuku at any time.</string>
     <string name="shizuku_request_access">Request access</string>
-    <string name="shizuku_open_manager">Open Shizuku</string>
-    <string name="shizuku_install_manager">Install Shizuku, start its service, then return here.</string>
+    <string name="shizuku_open_manager">Open Shizuku / ShizukuPlus</string>
+    <string name="shizuku_install_manager">Install Shizuku or ShizukuPlus, start its service, then return here.</string>
+    <string name="shizuku_connecting">Requesting a connection from the installed Shizuku manager…</string>
+    <string name="shizuku_connection_failed">The Shizuku manager did not provide a running service. Start its service, then request access again.</string>
     <string name="shizuku_not_running">Shizuku is not connected. Start it in the Shizuku app, then return here.</string>
     <string name="shizuku_too_old">Update Shizuku to use this integration.</string>
     <string name="shizuku_access_needed">Shizuku is running. Permission is required for thermal diagnostics.</string>

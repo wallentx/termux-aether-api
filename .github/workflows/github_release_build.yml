@@ -22,6 +22,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Test Shizuku manager discovery
+        run: |
+          python3 -B scripts/test_shizuku_discovery.py
+          python3 -B scripts/test_shizuku_access_lifecycle.py
       - uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
