@@ -6,6 +6,11 @@ xmlns:app="http://schemas.android.com/apk/res-auto"
 tools:ignore="UnusedResources" >
 
     <item
+        android:id="@+id/menu_shizuku"
+        android:title="@string/shizuku_access"
+        app:showAsAction="never" />
+
+    <item
         android:id="@+id/menu_settings"
         android:icon="@drawable/ic_settings"
         android:title="@string/action_settings"

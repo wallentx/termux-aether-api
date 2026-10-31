@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+# DHCP owns addresses/routes; our hook supplies DNS without requiring systemd.
+set -eu
+install -d -m 755 /run/termux-network
+interface=${1:-avf0}
+[[ $interface == avf0 || $interface == eth0 ]] || exit 2
+if [[ $interface == avf0 && ! -e /sys/class/net/avf0 ]]; then
+    /usr/local/sbin/termux-vsock-net > /run/termux-vsock-net.log 2>&1 &
+    for ((attempt=0; attempt<30; attempt++)); do
+        [[ ! -e /sys/class/net/avf0 ]] || break
+        sleep 0.1
+    done
+fi
+ip link set "$interface" up
+metric=100
+[[ $interface != eth0 ]] || metric=200
+# Keep retrying offline and renewing leases without delaying local SSH access.
+exec dhcpcd -4 -B -L -t 0 -m "$metric" -f /dev/null -o domain_name_servers \
+    -c /usr/local/libexec/termux-dhcp-hook "$interface"

@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "operation": "rollback",
+  "state": "/data/data/com.termux/files/home/.local/state/termux-aether/kernel-d236d57447494e8cbed05ff358a46859",
+  "stage": "/data/local/tmp/aether-kernel-d236d57447494e8cbed05ff358a46859",
+  "before_sha256": "1bab0b33d9bede1ac3546e59caf1b1c824a9c37e5f733a5601b4de88a4d8837a",
+  "image_sha256": "3a04b30955695df5e7b278bd73eeb2e821b251c3a3dfae2532a095ca530dd7a9",
+  "backup_id": "168420fe5aa04607a3d7055ba3c558ee",
+  "disk_inode": 288875,
+  "disk_device": 65042,
+  "disk_bytes": 17179869184,
+  "boot_verified": false
+}

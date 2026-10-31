@@ -1,0 +1,10 @@
+[Unit]
+Description=Report verified local AVF boot readiness
+Requires=termux-vm-bootstrap.service termux-vm-sshd.service termux-vm-vsock-ssh.service
+Wants=termux-vm-shared-storage.service
+After=termux-vm-bootstrap.service termux-vm-sshd.service termux-vm-vsock-ssh.service termux-vm-shared-storage.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/termux-vm-systemd ready
